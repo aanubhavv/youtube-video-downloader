@@ -13,8 +13,22 @@ interface VideoInfo {
   view_count: number;
   upload_date: string;
   formats: {
-    video_formats: any[];
-    audio_formats: any[];
+    video_formats: Array<{
+      format_id: string;
+      width?: number;
+      height?: number;
+      fps?: number;
+      vcodec?: string;
+      filesize?: number;
+      tbr?: number;
+    }>;
+    audio_formats: Array<{
+      format_id: string;
+      acodec?: string;
+      abr?: number;
+      filesize?: number;
+      tbr?: number;
+    }>;
     recommended_video: string;
     recommended_audio: string;
   };
@@ -149,14 +163,6 @@ export default function Home() {
     }
   };
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return "0 B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
-  };
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
       <div className="container mx-auto px-4 py-8">
@@ -182,8 +188,8 @@ export default function Home() {
                 3. <strong>Choose Quality:</strong> Select your preferred video
                 quality
                 <br />
-                4. <strong>Download:</strong> Click "Download" and the file will
-                save to your Downloads folder
+                4. <strong>Download:</strong> Click &quot;Download&quot; and the
+                file will save to your Downloads folder
               </p>
             </div>
           </div>

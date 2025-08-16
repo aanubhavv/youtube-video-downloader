@@ -1,3 +1,5 @@
+import Image from "next/image";
+
 interface VideoInfo {
   title: string;
   duration: number;
@@ -7,8 +9,22 @@ interface VideoInfo {
   view_count: number;
   upload_date: string;
   formats: {
-    video_formats: any[];
-    audio_formats: any[];
+    video_formats: Array<{
+      format_id: string;
+      width?: number;
+      height?: number;
+      fps?: number;
+      vcodec?: string;
+      filesize?: number;
+      tbr?: number;
+    }>;
+    audio_formats: Array<{
+      format_id: string;
+      acodec?: string;
+      abr?: number;
+      filesize?: number;
+      tbr?: number;
+    }>;
     recommended_video: string;
     recommended_audio: string;
   };
@@ -55,10 +71,13 @@ export default function VideoInfoCard({ videoInfo }: Props) {
         {/* Thumbnail */}
         <div className="md:w-80 flex-shrink-0">
           {videoInfo.thumbnail && (
-            <img
+            <Image
               src={videoInfo.thumbnail}
               alt={videoInfo.title}
+              width={320}
+              height={180}
               className="w-full h-48 md:h-auto object-cover rounded-lg"
+              unoptimized
             />
           )}
         </div>
