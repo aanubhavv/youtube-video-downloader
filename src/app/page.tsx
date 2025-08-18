@@ -3,6 +3,7 @@
 import { useState } from "react";
 import VideoInfoCard from "@/components/VideoInfoCard";
 import DownloadProgress from "@/components/DownloadProgress";
+import api from "@/services/api";
 
 interface VideoInfo {
   title: string;
@@ -35,7 +36,8 @@ interface VideoInfo {
 }
 
 interface DownloadTask {
-  task_id: string;
+  task_id?: string;
+  download_id?: string;
   status: string;
   message: string;
 }
@@ -57,8 +59,6 @@ export default function Home() {
   const [downloadedFiles, setDownloadedFiles] = useState<DownloadedFile[]>([]);
   const [showDownloads, setShowDownloads] = useState(false);
 
-  const API_BASE_URL = "http://localhost:5000";
-
   const fetchVideoInfo = async () => {
     if (!url.trim()) {
       setError("Please enter a YouTube URL");
@@ -69,20 +69,7 @@ export default function Home() {
     setError("");
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/video-info`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ url }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to fetch video info");
-      }
-
+      const data = await api.getVideoInfo(url);
       setVideoInfo(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
@@ -101,20 +88,8 @@ export default function Home() {
     setLoading(true);
 
     try {
-      // First, get download info
-      const response = await fetch(`${API_BASE_URL}/api/download-direct`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ url, quality }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to prepare download");
-      }
+      // Start direct download using API service
+      const data = await api.startDirectDownload(url, quality);
 
       // Create a temporary download task for status
       const directTask: DownloadTask = {
@@ -127,7 +102,7 @@ export default function Home() {
 
       // Trigger direct download
       const link = document.createElement("a");
-      link.href = `${API_BASE_URL}${data.download_url}`;
+      link.href = api.getDirectDownloadUrl(data.download_id!);
       link.download = `${data.safe_title}.mp4`;
       link.style.display = "none";
       document.body.appendChild(link);
@@ -178,22 +153,10 @@ export default function Home() {
     setError("");
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/download`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ url, quality }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to start download");
-      }
+      const data = await api.startServerDownload(url, quality);
 
       const newTask: DownloadTask = {
-        task_id: data.task_id,
+        task_id: data.task_id!,
         status: data.status,
         message: data.message,
       };
@@ -206,15 +169,9 @@ export default function Home() {
 
   const fetchDownloadedFiles = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/downloads/files`);
-      const data = await response.json();
-
-      if (response.ok) {
-        setDownloadedFiles(data.files || []);
-        setShowDownloads(true);
-      } else {
-        setError(data.error || "Failed to fetch downloaded files");
-      }
+      const data = await api.getDownloadedFiles();
+      setDownloadedFiles(data.files || []);
+      setShowDownloads(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
     }
@@ -370,9 +327,7 @@ export default function Home() {
                         </div>
                         <div className="flex gap-2 ml-4">
                           <a
-                            href={`${API_BASE_URL}/api/downloads/files/${encodeURIComponent(
-                              file.name
-                            )}`}
+                            href={api.getDownloadFileUrl(file.name)}
                             download={file.name}
                             className="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition-colors inline-block text-center"
                           >
@@ -382,9 +337,7 @@ export default function Home() {
                             onClick={() => {
                               // Alternative download method using fetch
                               const link = document.createElement("a");
-                              link.href = `${API_BASE_URL}/api/downloads/files/${encodeURIComponent(
-                                file.name
-                              )}`;
+                              link.href = api.getDownloadFileUrl(file.name);
                               link.download = file.name;
                               document.body.appendChild(link);
                               link.click();
@@ -413,11 +366,11 @@ export default function Home() {
                 Download Progress
               </h3>
               <div className="space-y-4">
-                {downloadTasks.map((task) => (
+                {downloadTasks.map((task, index) => (
                   <DownloadProgress
-                    key={task.task_id}
+                    key={task.task_id || task.download_id || index}
                     task={task}
-                    apiBaseUrl={API_BASE_URL}
+                    api={api}
                   />
                 ))}
               </div>

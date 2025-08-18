@@ -8,7 +8,16 @@ from datetime import datetime
 import uuid
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+
+# Configure CORS for production
+allowed_origins = [
+    "http://localhost:3000",  # Development
+    os.getenv("FRONTEND_URL", "https://your-app.vercel.app")  # Production
+]
+
+CORS(app, origins=allowed_origins, 
+     allow_headers=["Content-Type", "Authorization"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 
 # Store download status
 download_status = {}
@@ -674,4 +683,9 @@ def download_file(filename):
 if __name__ == '__main__':
     # Create downloads directory if it doesn't exist
     os.makedirs('downloads', exist_ok=True)
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    
+    # Get port from environment variable (Railway sets this)
+    port = int(os.getenv('PORT', 5000))
+    debug_mode = os.getenv('FLASK_ENV') == 'development'
+    
+    app.run(debug=debug_mode, host='0.0.0.0', port=port)

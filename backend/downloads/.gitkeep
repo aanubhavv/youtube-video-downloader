@@ -1,0 +1,2 @@
+# This file ensures the downloads directory is included in git
+# Downloaded files will be placed here during runtime

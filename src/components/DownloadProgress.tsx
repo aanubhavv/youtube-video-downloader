@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 
 interface DownloadTask {
-  task_id: string;
+  task_id?: string;
+  download_id?: string;
   status: string;
   message: string;
   video_info?: {
@@ -18,12 +19,17 @@ interface DownloadTask {
   download_path?: string;
 }
 
-interface Props {
-  task: DownloadTask;
-  apiBaseUrl: string;
+interface API {
+  getDownloadStatus: (taskId: string) => Promise<any>;
+  getDownloadFileUrl: (filename: string) => string;
 }
 
-export default function DownloadProgress({ task, apiBaseUrl }: Props) {
+interface Props {
+  task: DownloadTask;
+  api: API;
+}
+
+export default function DownloadProgress({ task, api }: Props) {
   const [currentTask, setCurrentTask] = useState(task);
   const [isPolling, setIsPolling] = useState(true);
 
@@ -38,16 +44,14 @@ export default function DownloadProgress({ task, apiBaseUrl }: Props) {
       }
 
       try {
-        const response = await fetch(
-          `${apiBaseUrl}/api/download-status/${task.task_id}`
-        );
-        if (response.ok) {
-          const data = await response.json();
-          setCurrentTask(data);
+        const taskId = task.task_id || task.download_id;
+        if (!taskId) return;
 
-          if (data.status === "completed" || data.status === "error") {
-            setIsPolling(false);
-          }
+        const data = await api.getDownloadStatus(taskId);
+        setCurrentTask(data);
+
+        if (data.status === "completed" || data.status === "error") {
+          setIsPolling(false);
         }
       } catch (error) {
         console.error("Failed to fetch download status:", error);
@@ -56,7 +60,7 @@ export default function DownloadProgress({ task, apiBaseUrl }: Props) {
 
     const interval = setInterval(pollStatus, 2000); // Poll every 2 seconds
     return () => clearInterval(interval);
-  }, [task.task_id, apiBaseUrl, isPolling, currentTask.status]);
+  }, [task.task_id, api, isPolling, currentTask.status]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -177,9 +181,9 @@ export default function DownloadProgress({ task, apiBaseUrl }: Props) {
               {currentTask.downloaded_files &&
                 currentTask.downloaded_files.length === 1 && (
                   <a
-                    href={`${apiBaseUrl}/api/downloads/files/${encodeURIComponent(
+                    href={api.getDownloadFileUrl(
                       currentTask.downloaded_files[0]
-                    )}`}
+                    )}
                     download={currentTask.downloaded_files[0]}
                     className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition-colors"
                   >
@@ -201,9 +205,7 @@ export default function DownloadProgress({ task, apiBaseUrl }: Props) {
                           🎬 <span className="truncate">{file}</span>
                         </span>
                         <a
-                          href={`${apiBaseUrl}/api/downloads/files/${encodeURIComponent(
-                            file
-                          )}`}
+                          href={api.getDownloadFileUrl(file)}
                           download={file}
                           className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition-colors whitespace-nowrap"
                         >
