@@ -184,15 +184,44 @@ def get_best_formats(info):
     """
     formats = info.get('formats', [])
     
+    if not formats:
+        logger.warning("No formats available for video")
+        return None, None, {'video_format': None, 'audio_format': None}
+    
     # Separate video and audio formats
     video_formats = []
     audio_formats = []
+    combined_formats = []
     
     for fmt in formats:
-        if fmt.get('vcodec') != 'none' and fmt.get('acodec') == 'none':  # Video only
+        vcodec = fmt.get('vcodec', 'none')
+        acodec = fmt.get('acodec', 'none')
+        
+        if vcodec != 'none' and acodec == 'none':  # Video only
             video_formats.append(fmt)
-        elif fmt.get('acodec') != 'none' and fmt.get('vcodec') == 'none':  # Audio only
+        elif acodec != 'none' and vcodec == 'none':  # Audio only
             audio_formats.append(fmt)
+        elif vcodec != 'none' and acodec != 'none':  # Combined
+            combined_formats.append(fmt)
+    
+    # Log what we found
+    logger.info(f"Format analysis: {len(video_formats)} video-only, {len(audio_formats)} audio-only, {len(combined_formats)} combined")
+    
+    # If we only have combined formats, use the best one
+    if combined_formats and not video_formats and not audio_formats:
+        logger.info("Only combined formats available, using best combined format")
+        best_combined = max(combined_formats, key=lambda x: (
+            x.get('height', 0),
+            x.get('tbr', 0)
+        ))
+        return best_combined.get('format_id'), None, {
+            'video_format': best_combined,
+            'audio_format': best_combined,
+            'video_formats': combined_formats[:10],
+            'audio_formats': combined_formats[:8],
+            'total_video_formats': len(combined_formats),
+            'total_audio_formats': len(combined_formats)
+        }
     
     # Sort video formats by quality (height, then fps, then bitrate) - Fixed None handling
     video_formats.sort(key=lambda x: (
@@ -224,6 +253,18 @@ def get_best_formats(info):
     # Find best audio format
     if audio_formats:
         best_audio = audio_formats[0]
+    
+    # If no separate video/audio but we have combined, use those as fallback
+    if not best_video and not best_audio and combined_formats:
+        best_combined = max(combined_formats, key=lambda x: x.get('tbr', 0))
+        return best_combined.get('format_id'), None, {
+            'video_format': best_combined,
+            'audio_format': best_combined,
+            'video_formats': combined_formats[:10],
+            'audio_formats': combined_formats[:8],
+            'total_video_formats': len(combined_formats),
+            'total_audio_formats': len(combined_formats)
+        }
     
     format_info = {
         'video_format': best_video,
@@ -259,16 +300,40 @@ def get_simple_quality_label(format_info, video_id, audio_id):
 def get_format_for_quality(info, quality):
     """Get specific format IDs for the requested quality"""
     formats = info.get('formats', [])
+    if not formats:
+        logger.warning("No formats found in video info")
+        return None, None, {'video_format': None, 'audio_format': None}
     
     # Separate video and audio formats
     video_formats = []
     audio_formats = []
+    combined_formats = []  # Formats with both video and audio
     
     for fmt in formats:
-        if fmt.get('vcodec') != 'none' and fmt.get('acodec') == 'none':  # Video only
+        vcodec = fmt.get('vcodec', 'none')
+        acodec = fmt.get('acodec', 'none')
+        
+        if vcodec != 'none' and acodec == 'none':  # Video only
             video_formats.append(fmt)
-        elif fmt.get('acodec') != 'none' and fmt.get('vcodec') == 'none':  # Audio only
+        elif acodec != 'none' and vcodec == 'none':  # Audio only
             audio_formats.append(fmt)
+        elif vcodec != 'none' and acodec != 'none':  # Combined
+            combined_formats.append(fmt)
+    
+    logger.info(f"Found {len(video_formats)} video, {len(audio_formats)} audio, {len(combined_formats)} combined formats")
+    
+    # If we have combined formats and no separate video/audio, use combined
+    if combined_formats and not video_formats and not audio_formats:
+        logger.info("Using combined formats as fallback")
+        combined_formats.sort(key=lambda x: (
+            x.get('height') or 0,
+            x.get('tbr') or 0
+        ), reverse=True)
+        best_combined = combined_formats[0]
+        return best_combined.get('format_id'), None, {
+            'video_format': best_combined,
+            'audio_format': best_combined
+        }
     
     # Sort formats by quality
     video_formats = sorted(video_formats, key=lambda x: (
@@ -288,8 +353,22 @@ def get_format_for_quality(info, quality):
     if quality == 'auto':
         # Use the existing get_best_formats function for auto
         video_id, audio_id, format_info = get_best_formats(info)
+        if not video_id and not audio_id and combined_formats:
+            # Fallback to best combined format
+            best_combined = combined_formats[0]
+            return best_combined.get('format_id'), None, {
+                'video_format': best_combined,
+                'audio_format': best_combined
+            }
         return video_id, audio_id, format_info
     elif quality == 'bestaudio':
+        if not best_audio and combined_formats:
+            # Use audio from combined format
+            best_combined = max(combined_formats, key=lambda x: x.get('abr', 0))
+            return None, best_combined.get('format_id'), {
+                'audio_format': best_combined,
+                'video_format': None
+            }
         return None, best_audio.get('format_id') if best_audio else None, {
             'audio_format': best_audio,
             'video_format': None
@@ -302,6 +381,8 @@ def get_format_for_quality(info, quality):
                 target_height = int(quality.split('height<=')[1].split(']')[0])
             except:
                 target_height = 1080  # fallback
+        else:
+            target_height = 1080  # Default fallback
         
         # Find best video format at or below target height
         best_video = None
@@ -312,8 +393,16 @@ def get_format_for_quality(info, quality):
                 break
         
         # If no format found at target height, get the lowest available
-        if not best_video and video_formats:
-            best_video = video_formats[-1]  # Last (lowest quality) format
+        if not best_video:
+            if video_formats:
+                best_video = video_formats[-1]  # Last (lowest quality) format
+            elif combined_formats:
+                # Fallback to combined format
+                suitable_combined = [f for f in combined_formats if (f.get('height', 0) <= target_height)]
+                if suitable_combined:
+                    best_video = max(suitable_combined, key=lambda x: x.get('height', 0))
+                else:
+                    best_video = min(combined_formats, key=lambda x: x.get('height', 9999))
         
         format_info = {
             'video_format': best_video,
@@ -587,12 +676,32 @@ def get_video_info():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             
-            # Get format analysis for different qualities
-            auto_video_id, auto_audio_id, format_info = get_format_for_quality(info, 'auto')
-            p1080_video_id, p1080_audio_id, p1080_format_info = get_format_for_quality(info, 'best[height<=1080]')
-            p720_video_id, p720_audio_id, p720_format_info = get_format_for_quality(info, 'best[height<=720]')
-            p480_video_id, p480_audio_id, p480_format_info = get_format_for_quality(info, 'best[height<=480]')
+            # Get format analysis for different qualities with error handling
+            try:
+                auto_video_id, auto_audio_id, format_info = get_format_for_quality(info, 'auto')
+            except Exception as e:
+                logger.warning(f"Auto format analysis failed: {e}")
+                auto_video_id, auto_audio_id, format_info = None, None, {}
             
+            try:
+                p1080_video_id, p1080_audio_id, p1080_format_info = get_format_for_quality(info, 'best[height<=1080]')
+            except Exception as e:
+                logger.warning(f"1080p format analysis failed: {e}")
+                p1080_video_id, p1080_audio_id, p1080_format_info = None, None, {}
+                
+            try:
+                p720_video_id, p720_audio_id, p720_format_info = get_format_for_quality(info, 'best[height<=720]')
+            except Exception as e:
+                logger.warning(f"720p format analysis failed: {e}")
+                p720_video_id, p720_audio_id, p720_format_info = None, None, {}
+                
+            try:
+                p480_video_id, p480_audio_id, p480_format_info = get_format_for_quality(info, 'best[height<=480]')
+            except Exception as e:
+                logger.warning(f"480p format analysis failed: {e}")
+                p480_video_id, p480_audio_id, p480_format_info = None, None, {}
+            
+            # Prepare response with fallback values
             response = {
                 'title': info.get('title', 'Unknown'),
                 'duration': info.get('duration', 0),
@@ -614,6 +723,12 @@ def get_video_info():
                     }
                 }
             }
+            
+            # Log available formats for debugging
+            if info.get('formats'):
+                logger.info(f"Video has {len(info['formats'])} total formats available")
+            else:
+                logger.warning("No formats found in video info")
             
             logger.info(f"Successfully extracted info for: {info.get('title', 'Unknown')}")
             return jsonify(response)
