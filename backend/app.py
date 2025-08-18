@@ -4,21 +4,11 @@ import yt_dlp
 import os
 import tempfile
 import threading
-import json
 from datetime import datetime
-import io
 import uuid
-import os
 
 app = Flask(__name__)
-
-# Configure CORS for production
-if os.getenv('FLASK_ENV') == 'production':
-    # In production, specify your frontend domain
-    CORS(app, origins=[os.getenv('FRONTEND_URL', 'https://your-frontend-domain.com')])
-else:
-    # In development, allow all origins
-    CORS(app)
+CORS(app)  # Enable CORS for all routes
 
 # Store download status
 download_status = {}

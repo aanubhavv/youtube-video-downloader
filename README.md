@@ -4,12 +4,10 @@ A full-stack web application for downloading YouTube videos, built with Next.js 
 
 ## Features
 
-- 🎥 Download YouTube videos directly to device
+- 🎥 Download YouTube videos in various qualities
 - 📊 View detailed video information and available formats
 - 🔄 Real-time download progress tracking
 - 🎨 Modern, responsive UI with dark mode support
-- 🎯 Smart format selection (Best, 1080p, 720p, 480p, Audio Only)
-- ⚡ Direct-to-device downloads
 - 🐍 Python virtual environment for isolated backend dependencies
 - ⚡ Fast development with Turbopack
 

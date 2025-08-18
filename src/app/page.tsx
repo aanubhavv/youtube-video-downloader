@@ -40,6 +40,13 @@ interface DownloadTask {
   message: string;
 }
 
+interface DownloadedFile {
+  name: string;
+  size: number;
+  modified: string;
+  path: string;
+}
+
 export default function Home() {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -47,11 +54,10 @@ export default function Home() {
   const [quality, setQuality] = useState("auto");
   const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([]);
   const [error, setError] = useState("");
+  const [downloadedFiles, setDownloadedFiles] = useState<DownloadedFile[]>([]);
+  const [showDownloads, setShowDownloads] = useState(false);
 
-  const API_BASE_URL =
-    process.env.NODE_ENV === "production"
-      ? process.env.NEXT_PUBLIC_API_URL ?? ""
-      : "http://localhost:5000";
+  const API_BASE_URL = "http://localhost:5000";
 
   const fetchVideoInfo = async () => {
     if (!url.trim()) {
@@ -163,6 +169,65 @@ export default function Home() {
     }
   };
 
+  const startDownload = async () => {
+    if (!url.trim()) {
+      setError("Please enter a YouTube URL");
+      return;
+    }
+
+    setError("");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/download`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ url, quality }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to start download");
+      }
+
+      const newTask: DownloadTask = {
+        task_id: data.task_id,
+        status: data.status,
+        message: data.message,
+      };
+
+      setDownloadTasks((prev) => [newTask, ...prev]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An error occurred");
+    }
+  };
+
+  const fetchDownloadedFiles = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/downloads/files`);
+      const data = await response.json();
+
+      if (response.ok) {
+        setDownloadedFiles(data.files || []);
+        setShowDownloads(true);
+      } else {
+        setError(data.error || "Failed to fetch downloaded files");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An error occurred");
+    }
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes === 0) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
       <div className="container mx-auto px-4 py-8">
@@ -177,19 +242,8 @@ export default function Home() {
             </p>
             <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3 max-w-2xl mx-auto">
               <p className="text-blue-800 dark:text-blue-300 text-sm">
-                � <strong>How to use:</strong>
-                <br />
-                1. <strong>Copy YouTube URL:</strong> Go to YouTube and copy the
-                video link
-                <br />
-                2. <strong>Paste URL:</strong> Paste the link in the input box
-                below
-                <br />
-                3. <strong>Choose Quality:</strong> Select your preferred video
-                quality
-                <br />
-                4. <strong>Download:</strong> Click &quot;Download&quot; and the
-                file will save to your Downloads folder
+                💡 <strong>Download to Device:</strong> Downloads immediately to
+                your device&apos;s Downloads folder.
               </p>
             </div>
           </div>
@@ -239,16 +293,18 @@ export default function Home() {
                 <button
                   onClick={fetchVideoInfo}
                   disabled={loading}
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-semibold py-2 px-4 rounded-md transition duration-200 cursor-pointer disabled:cursor-not-allowed"
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-semibold py-2 px-4 rounded-md transition duration-200 cursor-pointer"
+                  style={{ cursor: "pointer" }}
                 >
                   {loading ? "Loading..." : "Get Video Info"}
                 </button>
                 <button
                   onClick={startDirectDownload}
                   disabled={loading}
-                  className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white font-semibold py-2 px-4 rounded-md transition duration-200 cursor-pointer disabled:cursor-not-allowed"
+                  className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white font-semibold py-2 px-4 rounded-md transition duration-200 cursor-pointer"
+                  style={{ cursor: "pointer" }}
                 >
-                  {loading ? "Preparing..." : "⬇️ Download"}
+                  {loading ? "Preparing..." : "⬇️ Download to Device"}
                 </button>
               </div>
             </div>
@@ -259,6 +315,93 @@ export default function Home() {
               </div>
             )}
           </div>
+
+          {/* Downloaded Files Section */}
+          {showDownloads && (
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 mb-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  Downloaded Files ({downloadedFiles.length})
+                </h3>
+                <button
+                  onClick={() => setShowDownloads(false)}
+                  className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {downloadedFiles.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-gray-600 dark:text-gray-400 mb-2">
+                    No files downloaded yet
+                  </p>
+                  <p className="text-gray-500 dark:text-gray-500 text-sm">
+                    Download some videos to see them here!
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-lg p-3 mb-4">
+                    <p className="text-green-800 dark:text-green-300 text-sm">
+                      🎉{" "}
+                      <strong>
+                        {downloadedFiles.length} file
+                        {downloadedFiles.length !== 1 ? "s" : ""} ready for
+                        download!
+                      </strong>
+                      Click the download buttons to save them to your device.
+                    </p>
+                  </div>
+                  <div className="space-y-3">
+                    {downloadedFiles.map((file, index) => (
+                      <div
+                        key={index}
+                        className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-lg"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-gray-900 dark:text-white truncate">
+                            🎬 {file.name}
+                          </p>
+                          <p className="text-sm text-gray-600 dark:text-gray-400">
+                            {formatFileSize(file.size)} • Modified:{" "}
+                            {new Date(file.modified).toLocaleDateString()}
+                          </p>
+                        </div>
+                        <div className="flex gap-2 ml-4">
+                          <a
+                            href={`${API_BASE_URL}/api/downloads/files/${encodeURIComponent(
+                              file.name
+                            )}`}
+                            download={file.name}
+                            className="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition-colors inline-block text-center"
+                          >
+                            ⬇️ Download
+                          </a>
+                          <button
+                            onClick={() => {
+                              // Alternative download method using fetch
+                              const link = document.createElement("a");
+                              link.href = `${API_BASE_URL}/api/downloads/files/${encodeURIComponent(
+                                file.name
+                              )}`;
+                              link.download = file.name;
+                              document.body.appendChild(link);
+                              link.click();
+                              document.body.removeChild(link);
+                            }}
+                            className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors"
+                          >
+                            💾 Save
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           {/* Video Info Card */}
           {videoInfo && <VideoInfoCard videoInfo={videoInfo} />}
