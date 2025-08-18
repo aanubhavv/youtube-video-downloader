@@ -6,6 +6,7 @@ import tempfile
 import threading
 from datetime import datetime
 import uuid
+import random
 
 app = Flask(__name__)
 
@@ -21,6 +22,72 @@ CORS(app, origins=allowed_origins,
 
 # Store download status
 download_status = {}
+
+def get_ydl_opts(output_folder=None, format_string='best[height<=1080]/best'):
+    """Get yt-dlp options with anti-bot measures"""
+    
+    # Random user agents to avoid detection
+    user_agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    ]
+    
+    selected_ua = random.choice(user_agents)
+    
+    ydl_opts = {
+        'format': format_string,
+        'noplaylist': True,
+        'extract_flat': False,
+        'writeinfojson': False,
+        'writesubtitles': False,
+        'writeautomaticsub': False,
+        'ignoreerrors': False,
+        
+        # Anti-bot measures
+        'user_agent': selected_ua,
+        'sleep_interval': 1,
+        'max_sleep_interval': 3,
+        'sleep_interval_requests': 1,
+        'sleep_interval_subtitles': 1,
+        
+        # Additional headers
+        'http_headers': {
+            'User-Agent': selected_ua,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-us,en;q=0.5',
+            'Accept-Encoding': 'gzip,deflate',
+            'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
+            'Keep-Alive': '300',
+            'Connection': 'keep-alive',
+        },
+        
+        # Retry options
+        'retries': 3,
+        'fragment_retries': 3,
+        'extractor_retries': 3,
+        
+        # Use IPv4 only (sometimes helps)
+        'force_ipv4': True,
+        
+        # YouTube specific options
+        'extractor_args': {
+            'youtube': {
+                'skip': ['dash', 'hls'],  # Skip DASH and HLS formats sometimes helps
+                'player_skip': ['configs'],  # Skip player config
+            }
+        },
+        
+        # Disable DASH manifest
+        'youtube_include_dash_manifest': False,
+    }
+    
+    # Add output template if folder specified
+    if output_folder:
+        ydl_opts['outtmpl'] = os.path.join(output_folder, '%(title)s.%(ext)s')
+    
+    return ydl_opts
 
 def get_best_formats(info):
     """
@@ -182,8 +249,11 @@ def download_video_async(task_id, url, output_folder, quality='auto'):
         download_status[task_id]['status'] = 'extracting_info'
         download_status[task_id]['message'] = 'Extracting video information...'
         
-        # Get video info first
-        with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+        # Get video info first with anti-bot measures
+        ydl_opts_info = get_ydl_opts()
+        ydl_opts_info['quiet'] = True
+        
+        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
             info = ydl.extract_info(url, download=False)
             title = info.get('title', 'Unknown')
             duration = info.get('duration', 0)
@@ -219,12 +289,8 @@ def download_video_async(task_id, url, output_folder, quality='auto'):
         download_status[task_id]['status'] = 'downloading'
         download_status[task_id]['message'] = 'Downloading video...'
         
-        # Configure yt_dlp options
-        ydl_opts = {
-            'outtmpl': os.path.join(output_folder, '%(title)s.%(ext)s'),
-            'format': format_string,
-            'noplaylist': True,
-        }
+        # Configure yt_dlp options with anti-bot measures
+        ydl_opts = get_ydl_opts(output_folder, format_string)
         
         # Only add merge format if we're combining formats
         if '+' in format_string:
@@ -277,8 +343,11 @@ def get_video_info():
         if not url:
             return jsonify({'error': 'URL is required'}), 400
         
-        # Get video info
-        with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+        # Get video info with anti-bot measures
+        ydl_opts = get_ydl_opts()
+        ydl_opts['quiet'] = True
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             
             # Get format analysis for different qualities
@@ -338,8 +407,11 @@ def start_direct_download():
             'started_at': datetime.now().isoformat()
         }
 
-        # Get video info first to get title and analyze formats
-        with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+        # Get video info first to get title and analyze formats with anti-bot measures
+        ydl_opts_info = get_ydl_opts()
+        ydl_opts_info['quiet'] = True
+        
+        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
             info = ydl.extract_info(url, download=False)
             title = info.get('title', 'video')
             duration = info.get('duration', 0)
@@ -456,19 +528,21 @@ def stream_download(download_id):
                 
                 print(f"DEBUG: Using analyzed format: {format_string}")
                 
-                # Download to temporary directory with safe filename
-                ydl_opts = {
-                    'outtmpl': os.path.join(temp_dir, f'{safe_title}.%(ext)s'),
-                    'format': format_string,
-                    'noplaylist': True,
-                    'writeinfojson': False,
-                    'writesubtitles': False,
-                    'writeautomaticsub': False,
-                    'ignoreerrors': False,
-                }
+                # Download to temporary directory with safe filename and anti-bot measures
+                ydl_opts = get_ydl_opts(output_folder=None, format_string=format_string)
+                ydl_opts['outtmpl'] = os.path.join(temp_dir, f'{safe_title}.%(ext)s')
                 
                 # Add merge format if combining video and audio
                 if '+' in format_string:
+                    try:
+                        import subprocess
+                        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+                        ydl_opts['merge_output_format'] = 'mp4'
+                        print("DEBUG: FFmpeg available - will merge formats")
+                    except (subprocess.CalledProcessError, FileNotFoundError):
+                        print("DEBUG: FFmpeg not found - using fallback format")
+                        # Fallback to a simpler format selection
+                        ydl_opts['format'] = 'best[height<=1080]/best'
                     try:
                         import subprocess
                         subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
