@@ -144,39 +144,6 @@ export default function Home() {
     }
   };
 
-  const startDownload = async () => {
-    if (!url.trim()) {
-      setError("Please enter a YouTube URL");
-      return;
-    }
-
-    setError("");
-
-    try {
-      const data = await api.startServerDownload(url, quality);
-
-      const newTask: DownloadTask = {
-        task_id: data.task_id!,
-        status: data.status,
-        message: data.message,
-      };
-
-      setDownloadTasks((prev) => [newTask, ...prev]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
-    }
-  };
-
-  const fetchDownloadedFiles = async () => {
-    try {
-      const data = await api.getDownloadedFiles();
-      setDownloadedFiles(data.files || []);
-      setShowDownloads(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
-    }
-  };
-
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return "0 B";
     const k = 1024;

@@ -20,7 +20,7 @@ interface DownloadTask {
 }
 
 interface API {
-  getDownloadStatus: (taskId: string) => Promise<any>;
+  getDownloadStatus: (taskId: string) => Promise<DownloadTask>;
   getDownloadFileUrl: (filename: string) => string;
 }
 
@@ -60,7 +60,7 @@ export default function DownloadProgress({ task, api }: Props) {
 
     const interval = setInterval(pollStatus, 2000); // Poll every 2 seconds
     return () => clearInterval(interval);
-  }, [task.task_id, api, isPolling, currentTask.status]);
+  }, [task.task_id, task.download_id, api, isPolling, currentTask.status]);
 
   const getStatusColor = (status: string) => {
     switch (status) {

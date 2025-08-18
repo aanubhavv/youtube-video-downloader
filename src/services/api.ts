@@ -1,6 +1,37 @@
 // API service for YouTube Downloader
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
+interface DownloadTask {
+  task_id?: string;
+  download_id?: string;
+  status: string;
+  message: string;
+  video_info?: {
+    title: string;
+    duration: string;
+    uploader: string;
+  };
+  selected_format?: string;
+  format_description?: string;
+  started_at?: string;
+  completed_at?: string;
+  error?: string;
+  downloaded_files?: string[];
+  download_path?: string;
+}
+
+interface DownloadedFile {
+  name: string;
+  size: number;
+  modified: string;
+  path: string;
+}
+
+interface DownloadedFilesResponse {
+  files: DownloadedFile[];
+  download_path: string;
+}
+
 interface VideoInfo {
   title: string;
   duration: number;
@@ -109,7 +140,7 @@ export const api = {
     return await response.json();
   },
 
-  async getDownloadStatus(taskId: string): Promise<any> {
+  async getDownloadStatus(taskId: string): Promise<DownloadTask> {
     const response = await fetch(`${API_BASE_URL}/api/download-status/${taskId}`);
     
     if (!response.ok) {
@@ -120,7 +151,7 @@ export const api = {
     return await response.json();
   },
 
-  async getDownloadedFiles(): Promise<any> {
+  async getDownloadedFiles(): Promise<DownloadedFilesResponse> {
     const response = await fetch(`${API_BASE_URL}/api/downloads/files`);
     
     if (!response.ok) {
