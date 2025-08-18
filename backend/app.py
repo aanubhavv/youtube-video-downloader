@@ -4,15 +4,37 @@ import yt_dlp
 import os
 import tempfile
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 import logging
+import time
 
 app = Flask(__name__)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Rate limiting storage
+request_timestamps = []
+RATE_LIMIT_REQUESTS = 5  # Max 5 requests
+RATE_LIMIT_WINDOW = 300  # Per 5 minutes (300 seconds)
+
+def check_rate_limit():
+    """Check if we're hitting rate limits and need to slow down"""
+    global request_timestamps
+    current_time = time.time()
+    
+    # Clean old timestamps
+    request_timestamps = [ts for ts in request_timestamps if current_time - ts < RATE_LIMIT_WINDOW]
+    
+    # Check if we're at the limit
+    if len(request_timestamps) >= RATE_LIMIT_REQUESTS:
+        return False, RATE_LIMIT_WINDOW - (current_time - request_timestamps[0])
+    
+    # Add current timestamp
+    request_timestamps.append(current_time)
+    return True, 0
 
 # Configure CORS for production
 allowed_origins = [
@@ -95,16 +117,16 @@ def get_enhanced_ydl_opts(base_opts=None):
         'no_warnings': True,
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'referer': 'https://www.youtube.com/',
-        'sleep_interval': 2,
-        'max_sleep_interval': 10,
-        'extractor_retries': 5,
-        'fragment_retries': 5,
+        'sleep_interval': 3,  # Increased sleep interval
+        'max_sleep_interval': 15,  # Increased max sleep
+        'extractor_retries': 3,  # Reduced retries to avoid triggering more blocks
+        'fragment_retries': 3,
         'socket_timeout': 30,
         'http_chunk_size': 10485760,  # 10MB chunks
         'retry_sleep_functions': {
-            'http': lambda n: min(4 ** n, 100),
-            'fragment': lambda n: min(4 ** n, 100),
-            'extractor': lambda n: min(4 ** n, 100)
+            'http': lambda n: min(5 ** n, 120),  # More aggressive backoff
+            'fragment': lambda n: min(5 ** n, 120),
+            'extractor': lambda n: min(5 ** n, 120)
         },
         'http_headers': {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -113,7 +135,11 @@ def get_enhanced_ydl_opts(base_opts=None):
             'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
             'Keep-Alive': '300',
             'Connection': 'keep-alive',
-        }
+        },
+        # Additional anti-detection measures
+        'geo_bypass': True,
+        'force_json': False,
+        'force_write_archive': False
     }
     
     # Add cookie options to prevent bot detection
@@ -510,11 +536,24 @@ def cookie_status():
 def get_video_info():
     """Get video information without downloading"""
     try:
+        # Check rate limiting first
+        allowed, wait_time = check_rate_limit()
+        if not allowed:
+            logger.warning(f"Rate limit hit, suggested wait time: {wait_time} seconds")
+            return jsonify({
+                'error': 'Rate limit exceeded',
+                'retry_after': int(wait_time),
+                'type': 'rate_limit',
+                'message': f'Too many requests. Please wait {int(wait_time)} seconds before trying again.'
+            }), 429
+        
         data = request.get_json()
         url = data.get('url')
         
         if not url:
             return jsonify({'error': 'URL is required'}), 400
+        
+        logger.info(f"Extracting video info for: {url}")
         
         # Enhanced yt-dlp configuration to avoid bot detection
         ydl_opts = get_enhanced_ydl_opts({
@@ -555,28 +594,48 @@ def get_video_info():
                 }
             }
             
+            logger.info(f"Successfully extracted info for: {info.get('title', 'Unknown')}")
             return jsonify(response)
     
     except Exception as e:
         error_msg = str(e)
         logger.error(f"Video info extraction failed: {error_msg}")
         
-        if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
+        # Check for different types of errors
+        if any(phrase in error_msg.lower() for phrase in ['sign in to confirm', 'bot', 'blocked', '429']):
             cookie_options = get_cookie_options()
             cookie_suggestion = ""
             
             if not cookie_options:
-                cookie_suggestion = " Configure YT_DLP_COOKIES_FROM_BROWSER environment variable (e.g., 'chrome', 'firefox') or YT_DLP_COOKIES_FILE with path to cookies.txt file."
+                cookie_suggestion = " You need to add fresh YouTube cookies to cookies.txt file. See the documentation for instructions."
+            elif not any(key in cookie_options for key in ['cookiefile', 'cookiesfrombrowser']):
+                cookie_suggestion = " Your current cookies may be expired. Please update your cookies.txt file with fresh YouTube cookies."
             
             return jsonify({
-                'error': 'YouTube bot detection triggered. Authentication required.',
-                'retry_after': 300,  # Suggest retry after 5 minutes
+                'error': 'YouTube is blocking requests (429 error). Fresh authentication required.',
+                'retry_after': 600,  # Suggest retry after 10 minutes
                 'type': 'authentication_required',
-                'suggestion': f'Set up cookie authentication to bypass bot detection.{cookie_suggestion}',
-                'documentation': 'See https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp'
+                'suggestion': f'This is a bot detection/rate limiting issue.{cookie_suggestion}',
+                'documentation': 'You need valid YouTube session cookies in cookies.txt file.',
+                'help': {
+                    'step1': 'Go to YouTube.com in your browser while logged in',
+                    'step2': 'Copy cookies using browser extension or developer tools',
+                    'step3': 'Replace the contents of backend/cookies.txt with YouTube cookies',
+                    'step4': 'Restart the backend server'
+                }
             }), 429
+        elif 'network' in error_msg.lower() or 'timeout' in error_msg.lower():
+            return jsonify({
+                'error': 'Network connection issue',
+                'retry_after': 30,
+                'type': 'network_error',
+                'suggestion': 'Check your internet connection and try again.'
+            }), 503
         else:
-            return jsonify({'error': f'Failed to extract video info: {error_msg}'}), 500
+            return jsonify({
+                'error': f'Failed to extract video info: {error_msg}',
+                'type': 'extraction_error'
+            }), 500
 
 @app.route('/api/download-direct', methods=['POST'])
 def start_direct_download():
