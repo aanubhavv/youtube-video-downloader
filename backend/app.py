@@ -49,6 +49,10 @@ CORS(app, origins=allowed_origins,
 # Store download status
 download_status = {}
 
+# Cache cookie options to avoid repeated detection
+_cached_cookie_options = None
+_cookie_options_cached_at = None
+
 def get_cookie_options():
     """
     Get cookie configuration for yt-dlp to avoid bot detection
@@ -56,6 +60,15 @@ def get_cookie_options():
     Returns:
         dict: Cookie options for yt-dlp
     """
+    global _cached_cookie_options, _cookie_options_cached_at
+    
+    # Use cached options if available (cache for 5 minutes)
+    import time
+    if (_cached_cookie_options is not None and 
+        _cookie_options_cached_at is not None and 
+        time.time() - _cookie_options_cached_at < 300):
+        return _cached_cookie_options
+    
     cookie_options = {}
     
     # Check for cookie file path first (most reliable for production)
@@ -63,6 +76,8 @@ def get_cookie_options():
     if cookies_file and os.path.exists(cookies_file):
         logger.info(f"Using cookies file from environment: {cookies_file}")
         cookie_options['cookiefile'] = cookies_file
+        _cached_cookie_options = cookie_options
+        _cookie_options_cached_at = time.time()
         return cookie_options
     
     # Check for local cookies.txt file in the same directory
@@ -70,6 +85,8 @@ def get_cookie_options():
     if os.path.exists(local_cookies):
         logger.info(f"Using local cookies file: {local_cookies}")
         cookie_options['cookiefile'] = local_cookies
+        _cached_cookie_options = cookie_options
+        _cookie_options_cached_at = time.time()
         return cookie_options
     
     # Alternative: Check for cookies content as environment variable
@@ -82,6 +99,8 @@ def get_cookie_options():
                 f.write(cookies_content)
             logger.info(f"Using cookies from environment content: {temp_cookies_path}")
             cookie_options['cookiefile'] = temp_cookies_path
+            _cached_cookie_options = cookie_options
+            _cookie_options_cached_at = time.time()
             return cookie_options
         except Exception as e:
             logger.error(f"Failed to write cookies from environment: {e}")
@@ -658,10 +677,23 @@ def get_video_info():
             }), 429
         
         data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Request body is required'}), 400
+            
         url = data.get('url')
         
         if not url:
             return jsonify({'error': 'URL is required'}), 400
+        
+        # Validate URL format
+        if not isinstance(url, str) or not url.strip():
+            return jsonify({'error': 'URL must be a non-empty string'}), 400
+            
+        url = url.strip()
+        
+        # Basic URL scheme validation
+        if not (url.startswith('http://') or url.startswith('https://') or url.startswith('www.')):
+            return jsonify({'error': 'Invalid URL format. URL must start with http://, https://, or www.'}), 400
         
         logger.info(f"Extracting video info for: {url}")
         
@@ -1078,11 +1110,24 @@ def start_download():
     """Start video download"""
     try:
         data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Request body is required'}), 400
+            
         url = data.get('url')
         quality = data.get('quality', 'auto')
         
         if not url:
             return jsonify({'error': 'URL is required'}), 400
+        
+        # Validate URL format
+        if not isinstance(url, str) or not url.strip():
+            return jsonify({'error': 'URL must be a non-empty string'}), 400
+            
+        url = url.strip()
+        
+        # Basic URL scheme validation
+        if not (url.startswith('http://') or url.startswith('https://') or url.startswith('www.')):
+            return jsonify({'error': 'Invalid URL format. URL must start with http://, https://, or www.'}), 400
         
         # Use persistent downloads directory instead of temp
         downloads_dir = os.path.join(os.path.dirname(__file__), 'downloads')
