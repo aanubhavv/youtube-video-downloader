@@ -6,8 +6,13 @@ import tempfile
 import threading
 from datetime import datetime
 import uuid
+import logging
 
 app = Flask(__name__)
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Configure CORS for production
 allowed_origins = [
@@ -22,6 +27,43 @@ CORS(app, origins=allowed_origins,
 # Store download status
 download_status = {}
 
+def get_cookie_options():
+    """
+    Get cookie configuration for yt-dlp to avoid bot detection
+    
+    Returns:
+        dict: Cookie options for yt-dlp
+    """
+    cookie_options = {}
+    
+    # Check for cookies from browser (most reliable method)
+    cookies_from_browser = os.getenv('YT_DLP_COOKIES_FROM_BROWSER')
+    if cookies_from_browser:
+        logger.info(f"Using cookies from browser: {cookies_from_browser}")
+        cookie_options['cookiesfrombrowser'] = (cookies_from_browser, None, None, None)
+    
+    # Check for cookie file path
+    cookies_file = os.getenv('YT_DLP_COOKIES_FILE')
+    if cookies_file and os.path.exists(cookies_file):
+        logger.info(f"Using cookies file: {cookies_file}")
+        cookie_options['cookiefile'] = cookies_file
+    
+    # If no specific cookie config, try common browser locations for production
+    if not cookie_options and os.getenv('FLASK_ENV') == 'production':
+        # Try common browsers in order of preference
+        browsers_to_try = ['chrome', 'firefox', 'edge', 'safari']
+        for browser in browsers_to_try:
+            try:
+                # Test if browser cookies can be accessed
+                cookie_options['cookiesfrombrowser'] = (browser, None, None, None)
+                logger.info(f"Attempting to use {browser} cookies for production")
+                break
+            except Exception as e:
+                logger.warning(f"Failed to access {browser} cookies: {e}")
+                continue
+    
+    return cookie_options
+
 def get_enhanced_ydl_opts(base_opts=None):
     """
     Get enhanced yt-dlp options to minimize bot detection
@@ -30,7 +72,7 @@ def get_enhanced_ydl_opts(base_opts=None):
         base_opts (dict): Optional base options to merge with enhanced options
         
     Returns:
-        dict: Enhanced yt-dlp options
+        dict: Enhanced yt-dlp options with cookie support
     """
     enhanced_opts = {
         'quiet': True,
@@ -57,6 +99,10 @@ def get_enhanced_ydl_opts(base_opts=None):
             'Connection': 'keep-alive',
         }
     }
+    
+    # Add cookie options to prevent bot detection
+    cookie_options = get_cookie_options()
+    enhanced_opts.update(cookie_options)
     
     if base_opts:
         enhanced_opts.update(base_opts)
@@ -300,28 +346,46 @@ def download_video_async(task_id, url, output_folder, quality='auto'):
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with cookie status"""
+    cookie_options = get_cookie_options()
+    cookie_status = "No cookies configured"
+    
+    if 'cookiesfrombrowser' in cookie_options:
+        browser = cookie_options['cookiesfrombrowser'][0]
+        cookie_status = f"Using {browser} browser cookies"
+    elif 'cookiefile' in cookie_options:
+        cookie_status = f"Using cookies file: {cookie_options['cookiefile']}"
+    
     return jsonify({
         'status': 'ok', 
         'message': 'YouTube Downloader API is running',
         'server': 'Gunicorn Production Server' if 'gunicorn' in os.environ.get('SERVER_SOFTWARE', '').lower() else 'Flask Development Server',
         'environment': os.getenv('FLASK_ENV', 'production'),
-        'version': '1.1.0',  # Updated version with enhanced anti-bot measures
+        'version': '1.2.0',  # Updated version with cookie support
         'features': {
             'enhanced_anti_bot': True,
             'rate_limit_handling': True,
-            'browser_headers': True
+            'browser_headers': True,
+            'cookie_support': True
+        },
+        'cookie_status': cookie_status,
+        'available_env_vars': {
+            'YT_DLP_COOKIES_FROM_BROWSER': bool(os.getenv('YT_DLP_COOKIES_FROM_BROWSER')),
+            'YT_DLP_COOKIES_FILE': bool(os.getenv('YT_DLP_COOKIES_FILE'))
         }
     })
 
 @app.route('/api/test-video-extraction', methods=['GET'])
 def test_video_extraction():
-    """Test endpoint to verify yt-dlp configuration works"""
+    """Test endpoint to verify yt-dlp configuration works with cookies"""
     try:
         # Use a known working video URL for testing
         test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Rick Roll - commonly used for testing
         
         ydl_opts = get_enhanced_ydl_opts()
+        cookie_options = get_cookie_options()
+        
+        logger.info(f"Testing video extraction with cookie options: {list(cookie_options.keys())}")
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(test_url, download=False)
@@ -335,16 +399,27 @@ def test_video_extraction():
                     'user_agent': ydl_opts.get('user_agent', 'N/A'),
                     'sleep_interval': ydl_opts.get('sleep_interval', 0),
                     'extractor_retries': ydl_opts.get('extractor_retries', 0),
-                    'has_custom_headers': bool(ydl_opts.get('http_headers'))
+                    'has_custom_headers': bool(ydl_opts.get('http_headers')),
+                    'cookie_options': list(cookie_options.keys()),
+                    'cookies_from_browser': cookie_options.get('cookiesfrombrowser', [None])[0] if 'cookiesfrombrowser' in cookie_options else None,
+                    'cookies_file': cookie_options.get('cookiefile') if 'cookiefile' in cookie_options else None
                 }
             })
     except Exception as e:
         error_msg = str(e)
+        logger.error(f"Test extraction failed: {error_msg}")
+        
         if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
+            cookie_options = get_cookie_options()
             return jsonify({
                 'success': False,
-                'error': 'Bot detection triggered',
-                'message': 'YouTube is blocking requests. This confirms our detection logic works.',
+                'error': 'Bot detection triggered - cookie authentication needed',
+                'message': 'YouTube is blocking requests. Configure cookie authentication.',
+                'cookie_status': {
+                    'configured': bool(cookie_options),
+                    'options': list(cookie_options.keys()) if cookie_options else [],
+                    'suggestion': 'Set YT_DLP_COOKIES_FROM_BROWSER environment variable (e.g., chrome, firefox)'
+                },
                 'retry_recommended': True
             }), 429
         else:
@@ -353,6 +428,52 @@ def test_video_extraction():
                 'error': 'Extraction failed',
                 'message': error_msg
             }), 500
+
+@app.route('/api/cookie-status', methods=['GET'])
+def cookie_status():
+    """Check cookie configuration status"""
+    try:
+        cookie_options = get_cookie_options()
+        
+        # Test if we can create a YoutubeDL instance with the options
+        test_opts = get_enhanced_ydl_opts()
+        
+        # Quick validation without actually downloading
+        status = {
+            'configured': bool(cookie_options),
+            'options': list(cookie_options.keys()),
+            'environment_variables': {
+                'YT_DLP_COOKIES_FROM_BROWSER': os.getenv('YT_DLP_COOKIES_FROM_BROWSER'),
+                'YT_DLP_COOKIES_FILE': os.getenv('YT_DLP_COOKIES_FILE')
+            },
+            'recommendations': []
+        }
+        
+        if 'cookiesfrombrowser' in cookie_options:
+            browser = cookie_options['cookiesfrombrowser'][0]
+            status['active_method'] = f'Browser cookies from {browser}'
+        elif 'cookiefile' in cookie_options:
+            status['active_method'] = f'Cookie file: {cookie_options["cookiefile"]}'
+        else:
+            status['active_method'] = 'No cookie authentication configured'
+            status['recommendations'].append('Configure YT_DLP_COOKIES_FROM_BROWSER environment variable')
+            status['recommendations'].append('Supported browsers: chrome, firefox, edge, safari, opera, brave')
+        
+        # Test yt-dlp instantiation
+        try:
+            with yt_dlp.YoutubeDL(test_opts) as ydl:
+                status['ydl_initialization'] = 'success'
+        except Exception as e:
+            status['ydl_initialization'] = f'failed: {str(e)}'
+            status['recommendations'].append('Check yt-dlp configuration')
+        
+        return jsonify(status)
+        
+    except Exception as e:
+        return jsonify({
+            'error': f'Failed to check cookie status: {str(e)}',
+            'configured': False
+        }), 500
 
 @app.route('/api/video-info', methods=['POST'])
 def get_video_info():
@@ -407,11 +528,21 @@ def get_video_info():
     
     except Exception as e:
         error_msg = str(e)
+        logger.error(f"Video info extraction failed: {error_msg}")
+        
         if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
+            cookie_options = get_cookie_options()
+            cookie_suggestion = ""
+            
+            if not cookie_options:
+                cookie_suggestion = " Configure YT_DLP_COOKIES_FROM_BROWSER environment variable (e.g., 'chrome', 'firefox') or YT_DLP_COOKIES_FILE with path to cookies.txt file."
+            
             return jsonify({
-                'error': 'YouTube is temporarily blocking requests. Please try again in a few minutes.',
+                'error': 'YouTube bot detection triggered. Authentication required.',
                 'retry_after': 300,  # Suggest retry after 5 minutes
-                'type': 'rate_limit'
+                'type': 'authentication_required',
+                'suggestion': f'Set up cookie authentication to bypass bot detection.{cookie_suggestion}',
+                'documentation': 'See https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp'
             }), 429
         else:
             return jsonify({'error': f'Failed to extract video info: {error_msg}'}), 500
@@ -520,11 +651,21 @@ def start_direct_download():
     
     except Exception as e:
         error_msg = str(e)
+        logger.error(f"Download preparation failed: {error_msg}")
+        
         if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
+            cookie_options = get_cookie_options()
+            cookie_suggestion = ""
+            
+            if not cookie_options:
+                cookie_suggestion = " Configure YT_DLP_COOKIES_FROM_BROWSER environment variable (e.g., 'chrome', 'firefox') or YT_DLP_COOKIES_FILE with path to cookies.txt file."
+            
             return jsonify({
-                'error': 'YouTube is temporarily blocking requests. Please try again in a few minutes.',
+                'error': 'YouTube bot detection triggered. Authentication required.',
                 'retry_after': 300,  # Suggest retry after 5 minutes
-                'type': 'rate_limit'
+                'type': 'authentication_required',
+                'suggestion': f'Set up cookie authentication to bypass bot detection.{cookie_suggestion}',
+                'documentation': 'See https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp'
             }), 429
         else:
             return jsonify({'error': f'Failed to prepare download: {error_msg}'}), 500
@@ -674,16 +815,37 @@ def stream_download(download_id):
         return response
         
     except Exception as e:
-        print(f"DEBUG: Main exception in stream_download: {str(e)}")
+        error_msg = str(e)
+        logger.error(f"Stream download failed for {download_id}: {error_msg}")
+        
         # Clean up on error
         if hasattr(app, 'download_cache') and download_id in app.download_cache:
             del app.download_cache[download_id]
+        
         # Update status to error
         if download_id in download_status:
             download_status[download_id]['status'] = 'error'
-            download_status[download_id]['message'] = f'Direct download failed: {str(e)}'
-            download_status[download_id]['error'] = str(e)
-        return jsonify({'error': f'Download failed: {str(e)}'}), 500
+            download_status[download_id]['error'] = error_msg
+            
+            # Provide specific error messaging for bot detection
+            if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
+                cookie_options = get_cookie_options()
+                cookie_suggestion = ""
+                
+                if not cookie_options:
+                    cookie_suggestion = " Configure YT_DLP_COOKIES_FROM_BROWSER environment variable."
+                
+                download_status[download_id]['message'] = f'Bot detection triggered. Authentication required.{cookie_suggestion}'
+                return jsonify({
+                    'error': 'YouTube bot detection triggered. Authentication required.',
+                    'type': 'authentication_required',
+                    'suggestion': f'Set up cookie authentication to bypass bot detection.{cookie_suggestion}',
+                    'documentation': 'See COOKIES_SETUP.md for detailed instructions'
+                }), 429
+            else:
+                download_status[download_id]['message'] = f'Direct download failed: {error_msg}'
+        
+        return jsonify({'error': f'Download failed: {error_msg}'}), 500
 
 @app.route('/api/download', methods=['POST'])
 def start_download():
