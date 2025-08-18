@@ -100,12 +100,6 @@ export const api = {
 
     if (!response.ok) {
       const error = await response.json();
-      
-      // Handle rate limiting specifically
-      if (response.status === 429) {
-        throw new Error(`YouTube is temporarily blocking requests. Please wait ${Math.ceil((error.retry_after || 300) / 60)} minutes and try again.`);
-      }
-      
       throw new Error(error.error || 'Failed to fetch video info');
     }
 
@@ -123,12 +117,6 @@ export const api = {
 
     if (!response.ok) {
       const error = await response.json();
-      
-      // Handle rate limiting specifically
-      if (response.status === 429) {
-        throw new Error(`YouTube is temporarily blocking requests. Please wait ${Math.ceil((error.retry_after || 300) / 60)} minutes and try again.`);
-      }
-      
       throw new Error(error.error || 'Failed to start download');
     }
 
@@ -146,12 +134,6 @@ export const api = {
 
     if (!response.ok) {
       const error = await response.json();
-      
-      // Handle rate limiting specifically
-      if (response.status === 429) {
-        throw new Error(`YouTube is temporarily blocking requests. Please wait ${Math.ceil((error.retry_after || 300) / 60)} minutes and try again.`);
-      }
-      
       throw new Error(error.error || 'Failed to start download');
     }
 
