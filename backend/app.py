@@ -15,26 +15,61 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Rate limiting storage
-request_timestamps = []
-RATE_LIMIT_REQUESTS = 5  # Max 5 requests
-RATE_LIMIT_WINDOW = 300  # Per 5 minutes (300 seconds)
+# Rate limiting storage - separate tracking for different operations
+request_timestamps = {
+    'video_info': [],
+    'download': [],
+    'test': []
+}
 
-def check_rate_limit():
-    """Check if we're hitting rate limits and need to slow down"""
+# Different rate limits for different operations
+RATE_LIMITS = {
+    'video_info': {'requests': 15, 'window': 300},  # 15 requests per 5 minutes for video info
+    'download': {'requests': 8, 'window': 300},     # 8 downloads per 5 minutes 
+    'test': {'requests': 3, 'window': 300}          # 3 test requests per 5 minutes
+}
+
+def check_rate_limit(operation='video_info'):
+    """Check if we're hitting rate limits for a specific operation"""
     global request_timestamps
     current_time = time.time()
     
+    if operation not in RATE_LIMITS:
+        operation = 'video_info'  # Default fallback
+    
+    config = RATE_LIMITS[operation]
+    timestamps = request_timestamps.get(operation, [])
+    
     # Clean old timestamps
-    request_timestamps = [ts for ts in request_timestamps if current_time - ts < RATE_LIMIT_WINDOW]
+    timestamps = [ts for ts in timestamps if current_time - ts < config['window']]
+    request_timestamps[operation] = timestamps
     
     # Check if we're at the limit
-    if len(request_timestamps) >= RATE_LIMIT_REQUESTS:
-        return False, RATE_LIMIT_WINDOW - (current_time - request_timestamps[0])
+    if len(timestamps) >= config['requests']:
+        oldest_request = timestamps[0]
+        wait_time = config['window'] - (current_time - oldest_request)
+        return False, wait_time
     
     # Add current timestamp
-    request_timestamps.append(current_time)
+    timestamps.append(current_time)
+    request_timestamps[operation] = timestamps
     return True, 0
+
+def adaptive_sleep_before_request(operation='video_info'):
+    """Add adaptive sleep to avoid hitting rate limits proactively"""
+    timestamps = request_timestamps.get(operation, [])
+    current_time = time.time()
+    
+    # Clean old timestamps
+    timestamps = [ts for ts in timestamps if current_time - ts < 60]  # Look at last minute
+    
+    # If we've made requests recently, add a small delay
+    if len(timestamps) >= 3:  # If 3+ requests in last minute
+        recent_requests = len([ts for ts in timestamps if current_time - ts < 30])
+        if recent_requests >= 2:  # 2+ requests in last 30 seconds
+            sleep_time = min(3 + recent_requests, 10)  # Sleep 3-10 seconds
+            logger.info(f"Adding {sleep_time}s delay to avoid rate limiting")
+            time.sleep(sleep_time)
 
 # Configure CORS for production
 allowed_origins = [
@@ -53,6 +88,66 @@ download_status = {}
 _cached_cookie_options = None
 _cookie_options_cached_at = None
 
+def validate_cookies_file(cookies_path):
+    """
+    Validate if cookies file exists and contains essential YouTube cookies
+    
+    Args:
+        cookies_path (str): Path to the cookies file
+        
+    Returns:
+        tuple: (is_valid, message)
+    """
+    if not os.path.exists(cookies_path):
+        return False, f"Cookies file not found: {cookies_path}"
+    
+    try:
+        with open(cookies_path, 'r') as f:
+            content = f.read()
+        
+        # Check for essential YouTube cookies
+        essential_cookies = ['__Secure-3PSID', '__Secure-3PAPISID', 'VISITOR_INFO1_LIVE']
+        missing_cookies = []
+        
+        for cookie in essential_cookies:
+            if cookie not in content:
+                missing_cookies.append(cookie)
+        
+        if missing_cookies:
+            return False, f"Missing essential cookies: {', '.join(missing_cookies)}"
+        
+        # Check if the file has recent timestamps (cookies not too old)
+        lines = content.split('\n')
+        cookie_lines = [line for line in lines if line.strip() and not line.startswith('#')]
+        
+        if not cookie_lines:
+            return False, "Cookies file contains no valid cookie entries"
+        
+        # Check for expired session tokens (rough validation)
+        current_time = time.time()
+        has_valid_session = False
+        
+        for line in cookie_lines:
+            parts = line.split('\t')
+            if len(parts) >= 5:
+                try:
+                    expiry = int(parts[4]) if parts[4] != '0' else 0
+                    # If expiry is 0, it's a session cookie (valid)
+                    # If expiry is in the future, it's valid
+                    if expiry == 0 or expiry > current_time:
+                        has_valid_session = True
+                        break
+                except (ValueError, IndexError):
+                    continue
+        
+        if not has_valid_session:
+            return False, "All cookies appear to be expired"
+        
+        return True, "Cookies file validation passed"
+        
+    except Exception as e:
+        return False, f"Error reading cookies file: {str(e)}"
+
 def get_cookie_options():
     """
     Get cookie configuration for yt-dlp to avoid bot detection
@@ -62,32 +157,43 @@ def get_cookie_options():
     """
     global _cached_cookie_options, _cookie_options_cached_at
     
-    # Use cached options if available (cache for 5 minutes)
+    # Use cached options if available (cache for 2 minutes due to bot detection issues)
     import time
     if (_cached_cookie_options is not None and 
         _cookie_options_cached_at is not None and 
-        time.time() - _cookie_options_cached_at < 300):
+        time.time() - _cookie_options_cached_at < 120):  # Reduced cache time
         return _cached_cookie_options
     
     cookie_options = {}
     
     # Check for cookie file path first (most reliable for production)
     cookies_file = os.getenv('YT_DLP_COOKIES_FILE')
-    if cookies_file and os.path.exists(cookies_file):
-        logger.info(f"Using cookies file from environment: {cookies_file}")
-        cookie_options['cookiefile'] = cookies_file
-        _cached_cookie_options = cookie_options
-        _cookie_options_cached_at = time.time()
-        return cookie_options
+    if cookies_file:
+        is_valid, message = validate_cookies_file(cookies_file)
+        if is_valid:
+            logger.info(f"Using validated cookies file from environment: {cookies_file}")
+            cookie_options['cookiefile'] = cookies_file
+            _cached_cookie_options = cookie_options
+            _cookie_options_cached_at = time.time()
+            return cookie_options
+        else:
+            logger.warning(f"Environment cookies file validation failed: {message}")
     
     # Check for local cookies.txt file in the same directory
     local_cookies = os.path.join(os.path.dirname(__file__), 'cookies.txt')
     if os.path.exists(local_cookies):
-        logger.info(f"Using local cookies file: {local_cookies}")
-        cookie_options['cookiefile'] = local_cookies
-        _cached_cookie_options = cookie_options
-        _cookie_options_cached_at = time.time()
-        return cookie_options
+        is_valid, message = validate_cookies_file(local_cookies)
+        if is_valid:
+            logger.info(f"Using validated local cookies file: {local_cookies}")
+            cookie_options['cookiefile'] = local_cookies
+            _cached_cookie_options = cookie_options
+            _cookie_options_cached_at = time.time()
+            return cookie_options
+        else:
+            logger.warning(f"Local cookies file validation failed: {message}")
+            # Still try to use it even if validation fails, but log the issue
+            logger.info(f"Using potentially invalid cookies file: {local_cookies}")
+            cookie_options['cookiefile'] = local_cookies
     
     # Alternative: Check for cookies content as environment variable
     cookies_content = os.getenv('YOUTUBE_COOKIES_CONTENT')
@@ -155,31 +261,42 @@ def get_enhanced_ydl_opts(base_opts=None):
     enhanced_opts = {
         'quiet': True,
         'no_warnings': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',  # Updated Chrome version
         'referer': 'https://www.youtube.com/',
-        'sleep_interval': 3,  # Increased sleep interval
-        'max_sleep_interval': 15,  # Increased max sleep
-        'extractor_retries': 3,  # Reduced retries to avoid triggering more blocks
-        'fragment_retries': 3,
-        'socket_timeout': 30,
+        'sleep_interval': 5,  # Further increased sleep interval
+        'max_sleep_interval': 30,  # Increased max sleep to 30 seconds
+        'extractor_retries': 2,  # Reduced retries to avoid triggering more blocks
+        'fragment_retries': 2,
+        'socket_timeout': 60,  # Increased timeout
         'http_chunk_size': 10485760,  # 10MB chunks
         'retry_sleep_functions': {
-            'http': lambda n: min(5 ** n, 120),  # More aggressive backoff
-            'fragment': lambda n: min(5 ** n, 120),
-            'extractor': lambda n: min(5 ** n, 120)
+            'http': lambda n: min(10 ** n, 300),  # Much more aggressive backoff
+            'fragment': lambda n: min(10 ** n, 300),
+            'extractor': lambda n: min(10 ** n, 300)
         },
         'http_headers': {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-us,en;q=0.5',
-            'Accept-Encoding': 'gzip,deflate',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br, zstd',
             'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
             'Keep-Alive': '300',
             'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
         },
         # Additional anti-detection measures
         'geo_bypass': True,
         'force_json': False,
-        'force_write_archive': False
+        'force_write_archive': False,
+        # More conservative approach to avoid triggering bot detection
+        'extract_flat': False,
+        'ignoreerrors': False,
     }
     
     # Add cookie options to prevent bot detection
@@ -440,6 +557,9 @@ def download_video_async(task_id, url, output_folder, quality='auto'):
         download_status[task_id]['status'] = 'extracting_info'
         download_status[task_id]['message'] = 'Extracting video information...'
         
+        # Add a small delay before starting to avoid rapid successive requests
+        time.sleep(2)
+        
         # Get video info first
         with yt_dlp.YoutubeDL(get_enhanced_ydl_opts()) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -454,6 +574,9 @@ def download_video_async(task_id, url, output_folder, quality='auto'):
         
         download_status[task_id]['status'] = 'analyzing_formats'
         download_status[task_id]['message'] = 'Analyzing available formats...'
+        
+        # Add another small delay before format analysis
+        time.sleep(1)
         
         # Use new format selection function for all qualities
         video_id, audio_id, format_info = get_format_for_quality(info, quality)
@@ -515,9 +638,48 @@ def download_video_async(task_id, url, output_folder, quality='auto'):
         download_status[task_id]['message'] = f'Failed to download: {str(e)}'
         download_status[task_id]['error'] = str(e)
 
+@app.route('/api/rate-limit-status', methods=['GET'])
+def rate_limit_status():
+    """Get current rate limit status for all operations"""
+    try:
+        current_time = time.time()
+        status = {}
+        
+        for operation, config in RATE_LIMITS.items():
+            timestamps = request_timestamps.get(operation, [])
+            # Clean old timestamps for accurate count
+            recent_timestamps = [ts for ts in timestamps if current_time - ts < config['window']]
+            
+            remaining = max(0, config['requests'] - len(recent_timestamps))
+            reset_time = None
+            
+            if recent_timestamps:
+                oldest_request = min(recent_timestamps)
+                reset_time = oldest_request + config['window']
+            
+            status[operation] = {
+                'limit': config['requests'],
+                'window_seconds': config['window'],
+                'used': len(recent_timestamps),
+                'remaining': remaining,
+                'reset_at': datetime.fromtimestamp(reset_time).isoformat() if reset_time else None,
+                'reset_in_seconds': int(reset_time - current_time) if reset_time else 0
+            }
+        
+        return jsonify({
+            'rate_limits': status,
+            'timestamp': datetime.now().isoformat(),
+            'server_time': current_time
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': f'Failed to get rate limit status: {str(e)}'
+        }), 500
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Health check endpoint with cookie status"""
+    """Health check endpoint with cookie status and rate limit info"""
     cookie_options = get_cookie_options()
     cookie_status = "No cookies configured"
     
@@ -527,19 +689,29 @@ def health_check():
     elif 'cookiefile' in cookie_options:
         cookie_status = f"Using cookies file: {cookie_options['cookiefile']}"
     
+    # Get current rate limit usage
+    current_time = time.time()
+    rate_limit_summary = {}
+    for operation, config in RATE_LIMITS.items():
+        timestamps = request_timestamps.get(operation, [])
+        recent_count = len([ts for ts in timestamps if current_time - ts < config['window']])
+        rate_limit_summary[operation] = f"{recent_count}/{config['requests']}"
+    
     return jsonify({
         'status': 'ok', 
         'message': 'YouTube Downloader API is running',
         'server': 'Gunicorn Production Server' if 'gunicorn' in os.environ.get('SERVER_SOFTWARE', '').lower() else 'Flask Development Server',
         'environment': os.getenv('FLASK_ENV', 'production'),
-        'version': '1.2.0',  # Updated version with cookie support
+        'version': '1.3.0',  # Updated version with improved rate limiting
         'features': {
             'enhanced_anti_bot': True,
-            'rate_limit_handling': True,
+            'adaptive_rate_limiting': True,
             'browser_headers': True,
-            'cookie_support': True
+            'cookie_support': True,
+            'cookie_validation': True
         },
         'cookie_status': cookie_status,
+        'rate_limits': rate_limit_summary,
         'available_env_vars': {
             'YT_DLP_COOKIES_FROM_BROWSER': bool(os.getenv('YT_DLP_COOKIES_FROM_BROWSER')),
             'YT_DLP_COOKIES_FILE': bool(os.getenv('YT_DLP_COOKIES_FILE'))
@@ -550,8 +722,24 @@ def health_check():
 def test_video_extraction():
     """Test endpoint to verify yt-dlp configuration works with cookies"""
     try:
+        # Check rate limiting for test requests
+        allowed, wait_time = check_rate_limit('test')
+        if not allowed:
+            logger.warning(f"Test rate limit hit, suggested wait time: {wait_time} seconds")
+            return jsonify({
+                'success': False,
+                'error': 'Test rate limit exceeded',
+                'retry_after': int(wait_time),
+                'type': 'rate_limit',
+                'message': f'Too many test requests. Please wait {int(wait_time)} seconds before testing again.',
+                'limit_info': f'Limit: {RATE_LIMITS["test"]["requests"]} tests per {RATE_LIMITS["test"]["window"]} seconds'
+            }), 429
+        
         # Use a known working video URL for testing
         test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Rick Roll - commonly used for testing
+        
+        # Add adaptive delay before making the request
+        adaptive_sleep_before_request('test')
         
         ydl_opts = get_enhanced_ydl_opts()
         cookie_options = get_cookie_options()
@@ -619,8 +807,19 @@ def cookie_status():
             },
             'recommendations': [],
             'environment': os.getenv('FLASK_ENV', 'production'),
-            'server_type': 'production' if 'gunicorn' in os.environ.get('SERVER_SOFTWARE', '').lower() else 'development'
+            'server_type': 'production' if 'gunicorn' in os.environ.get('SERVER_SOFTWARE', '').lower() else 'development',
+            'cookie_validation': None
         }
+        
+        # Validate local cookies file if it exists
+        local_cookies = os.path.join(os.path.dirname(__file__), 'cookies.txt')
+        if os.path.exists(local_cookies):
+            is_valid, validation_message = validate_cookies_file(local_cookies)
+            status['cookie_validation'] = {
+                'file_path': local_cookies,
+                'is_valid': is_valid,
+                'message': validation_message
+            }
         
         if 'cookiesfrombrowser' in cookie_options:
             browser = cookie_options['cookiesfrombrowser'][0]
@@ -661,19 +860,77 @@ def cookie_status():
             'recommendation': 'Use cookie file method for production environments'
         }), 500
 
+@app.route('/api/refresh-cookies', methods=['POST'])
+def refresh_cookies():
+    """Force refresh of cookie cache and validate cookies"""
+    global _cached_cookie_options, _cookie_options_cached_at
+    
+    try:
+        # Clear cache
+        _cached_cookie_options = None
+        _cookie_options_cached_at = None
+        
+        # Get fresh cookie options
+        cookie_options = get_cookie_options()
+        
+        # Validate local cookies file if it exists
+        validation_result = None
+        local_cookies = os.path.join(os.path.dirname(__file__), 'cookies.txt')
+        if os.path.exists(local_cookies):
+            is_valid, message = validate_cookies_file(local_cookies)
+            validation_result = {
+                'file_path': local_cookies,
+                'is_valid': is_valid,
+                'message': message,
+                'size_bytes': os.path.getsize(local_cookies),
+                'modified_time': datetime.fromtimestamp(os.path.getmtime(local_cookies)).isoformat()
+            }
+            
+            # If validation failed, provide specific suggestions
+            if not is_valid:
+                suggestions = []
+                if 'expired' in message.lower():
+                    suggestions.append('Export fresh cookies from your browser')
+                    suggestions.append('Make sure you are logged into YouTube in your browser')
+                elif 'missing' in message.lower():
+                    suggestions.append('Export cookies from YouTube.com (not just any Google site)')
+                    suggestions.append('Ensure the browser extension exports all YouTube cookies')
+                else:
+                    suggestions.append('Try re-exporting cookies from your browser')
+                    suggestions.append('Verify the cookies.txt file format is correct')
+                
+                validation_result['suggestions'] = suggestions
+        
+        return jsonify({
+            'success': True,
+            'message': 'Cookie cache refreshed',
+            'cookie_options': list(cookie_options.keys()) if cookie_options else [],
+            'active_method': 'Cookie file' if 'cookiefile' in cookie_options else 'Browser cookies' if 'cookiesfrombrowser' in cookie_options else 'None',
+            'validation': validation_result,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Failed to refresh cookies: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
 @app.route('/api/video-info', methods=['POST'])
 def get_video_info():
     """Get video information without downloading"""
     try:
-        # Check rate limiting first
-        allowed, wait_time = check_rate_limit()
+        # Check rate limiting for video info requests
+        allowed, wait_time = check_rate_limit('video_info')
         if not allowed:
-            logger.warning(f"Rate limit hit, suggested wait time: {wait_time} seconds")
+            logger.warning(f"Video info rate limit hit, suggested wait time: {wait_time} seconds")
             return jsonify({
-                'error': 'Rate limit exceeded',
+                'error': 'Rate limit exceeded for video information requests',
                 'retry_after': int(wait_time),
                 'type': 'rate_limit',
-                'message': f'Too many requests. Please wait {int(wait_time)} seconds before trying again.'
+                'message': f'Too many video info requests. Please wait {int(wait_time)} seconds before trying again.',
+                'limit_info': f'Limit: {RATE_LIMITS["video_info"]["requests"]} requests per {RATE_LIMITS["video_info"]["window"]} seconds'
             }), 429
         
         data = request.get_json()
@@ -696,6 +953,9 @@ def get_video_info():
             return jsonify({'error': 'Invalid URL format. URL must start with http://, https://, or www.'}), 400
         
         logger.info(f"Extracting video info for: {url}")
+        
+        # Add adaptive delay before making the request
+        adaptive_sleep_before_request('video_info')
         
         # Enhanced yt-dlp configuration to avoid bot detection
         ydl_opts = get_enhanced_ydl_opts({
@@ -772,24 +1032,77 @@ def get_video_info():
         # Check for different types of errors
         if any(phrase in error_msg.lower() for phrase in ['sign in to confirm', 'bot', 'blocked', '429']):
             cookie_options = get_cookie_options()
-            cookie_suggestion = ""
             
-            if not cookie_options:
-                cookie_suggestion = " You need to add fresh YouTube cookies to cookies.txt file. See the documentation for instructions."
-            elif not any(key in cookie_options for key in ['cookiefile', 'cookiesfrombrowser']):
-                cookie_suggestion = " Your current cookies may be expired. Please update your cookies.txt file with fresh YouTube cookies."
+            # Provide detailed troubleshooting information
+            local_cookies = os.path.join(os.path.dirname(__file__), 'cookies.txt')
+            cookie_analysis = {
+                'has_local_cookies': os.path.exists(local_cookies),
+                'cookie_options_configured': bool(cookie_options),
+                'validation': None
+            }
+            
+            if os.path.exists(local_cookies):
+                is_valid, message = validate_cookies_file(local_cookies)
+                cookie_analysis['validation'] = {
+                    'is_valid': is_valid,
+                    'message': message,
+                    'file_size': os.path.getsize(local_cookies),
+                    'modified_ago_hours': (time.time() - os.path.getmtime(local_cookies)) / 3600
+                }
+            
+            suggestions = []
+            if not cookie_analysis['has_local_cookies']:
+                suggestions.extend([
+                    "1. Go to YouTube.com in your browser while logged in",
+                    "2. Use a browser extension like 'Get cookies.txt LOCALLY' to export cookies",
+                    "3. Save the cookies as 'cookies.txt' in the backend folder",
+                    "4. Restart the backend server"
+                ])
+            elif cookie_analysis['validation'] and not cookie_analysis['validation']['is_valid']:
+                if 'expired' in cookie_analysis['validation']['message'].lower():
+                    suggestions.extend([
+                        "Your cookies appear to be expired. Please:",
+                        "1. Go to YouTube.com and log in again",
+                        "2. Export fresh cookies using a browser extension",
+                        "3. Replace the existing cookies.txt file",
+                        "4. Restart the backend server"
+                    ])
+                elif 'missing' in cookie_analysis['validation']['message'].lower():
+                    suggestions.extend([
+                        "Essential YouTube cookies are missing. Please:",
+                        "1. Make sure you're logged into YouTube.com (not just Google)",
+                        "2. Export cookies specifically from YouTube.com domain",
+                        "3. Use a reliable cookie export extension",
+                        "4. Verify all cookies are exported, not just selected ones"
+                    ])
+                else:
+                    suggestions.extend([
+                        "Cookie validation failed. Please:",
+                        "1. Try using a different browser or incognito/private mode",
+                        "2. Log into YouTube.com and watch a video to ensure session is active",
+                        "3. Export cookies again using a different method or extension",
+                        "4. Check that the cookies.txt file format is correct (Netscape format)"
+                    ])
+            else:
+                # Cookies exist and seem valid, but still getting bot detection
+                suggestions.extend([
+                    "Despite having valid cookies, bot detection was triggered. Try:",
+                    "1. Wait 10-15 minutes before trying again (rate limiting)",
+                    "2. Export completely fresh cookies from a different browser session",
+                    "3. Try using a VPN if you're making many requests",
+                    "4. Ensure you're logged into YouTube and have watched videos recently"
+                ])
             
             return jsonify({
-                'error': 'YouTube is blocking requests (429 error). Fresh authentication required.',
-                'retry_after': 600,  # Suggest retry after 10 minutes
+                'error': 'YouTube bot detection triggered - Cookie authentication required',
                 'type': 'authentication_required',
-                'suggestion': f'This is a bot detection/rate limiting issue.{cookie_suggestion}',
-                'documentation': 'You need valid YouTube session cookies in cookies.txt file.',
-                'help': {
-                    'step1': 'Go to YouTube.com in your browser while logged in',
-                    'step2': 'Copy cookies using browser extension or developer tools',
-                    'step3': 'Replace the contents of backend/cookies.txt with YouTube cookies',
-                    'step4': 'Restart the backend server'
+                'retry_after': 900,  # 15 minutes
+                'cookie_analysis': cookie_analysis,
+                'detailed_suggestions': suggestions,
+                'quick_fix': 'Export fresh YouTube cookies to cookies.txt and restart server',
+                'help_endpoints': {
+                    'check_status': '/api/cookie-status',
+                    'refresh_cache': '/api/refresh-cookies'
                 }
             }), 429
         elif 'network' in error_msg.lower() or 'timeout' in error_msg.lower():
@@ -809,12 +1122,27 @@ def get_video_info():
 def start_direct_download():
     """Start direct download to user's device"""
     try:
+        # Check rate limiting for downloads
+        allowed, wait_time = check_rate_limit('download')
+        if not allowed:
+            logger.warning(f"Download rate limit hit, suggested wait time: {wait_time} seconds")
+            return jsonify({
+                'error': 'Download rate limit exceeded',
+                'retry_after': int(wait_time),
+                'type': 'rate_limit',
+                'message': f'Too many download requests. Please wait {int(wait_time)} seconds before starting another download.',
+                'limit_info': f'Limit: {RATE_LIMITS["download"]["requests"]} downloads per {RATE_LIMITS["download"]["window"]} seconds'
+            }), 429
+            
         data = request.get_json()
         url = data.get('url')
         quality = data.get('quality', 'auto')
         
         if not url:
             return jsonify({'error': 'URL is required'}), 400
+        
+        # Add adaptive delay before making the request
+        adaptive_sleep_before_request('download')
         
         # Create download ID first for status tracking
         download_id = str(uuid.uuid4())
@@ -1109,6 +1437,18 @@ def stream_download(download_id):
 def start_download():
     """Start video download"""
     try:
+        # Check rate limiting for downloads
+        allowed, wait_time = check_rate_limit('download')
+        if not allowed:
+            logger.warning(f"Download rate limit hit, suggested wait time: {wait_time} seconds")
+            return jsonify({
+                'error': 'Download rate limit exceeded',
+                'retry_after': int(wait_time),
+                'type': 'rate_limit',
+                'message': f'Too many download requests. Please wait {int(wait_time)} seconds before starting another download.',
+                'limit_info': f'Limit: {RATE_LIMITS["download"]["requests"]} downloads per {RATE_LIMITS["download"]["window"]} seconds'
+            }), 429
+            
         data = request.get_json()
         if not data:
             return jsonify({'error': 'Request body is required'}), 400
@@ -1128,6 +1468,9 @@ def start_download():
         # Basic URL scheme validation
         if not (url.startswith('http://') or url.startswith('https://') or url.startswith('www.')):
             return jsonify({'error': 'Invalid URL format. URL must start with http://, https://, or www.'}), 400
+        
+        # Add adaptive delay before making the request
+        adaptive_sleep_before_request('download')
         
         # Use persistent downloads directory instead of temp
         downloads_dir = os.path.join(os.path.dirname(__file__), 'downloads')
