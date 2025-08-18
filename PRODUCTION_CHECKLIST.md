@@ -19,7 +19,32 @@ The following has been implemented to resolve the "Sign in to confirm you're not
 
 ## 🚀 Deployment Steps
 
-### For Railway:
+### ⚠️ Important: Browser vs Cookie File Method
+
+**The error you're seeing means the server environment doesn't have browser access. Use the Cookie File method instead:**
+
+### Method 1: Cookie File (Recommended for Production)
+
+1. **Generate cookies.txt file**:
+
+   ```bash
+   # On your local machine with browser access
+   cd backend
+   pip install browser-cookie3
+   python generate_cookies.py
+   ```
+
+2. **Upload cookies.txt to your server** (Railway, Vercel, etc.)
+
+3. **Set Environment Variables**:
+
+   ```
+   YT_DLP_COOKIES_FILE = /app/cookies.txt
+   ```
+
+   Remove `YT_DLP_COOKIES_FROM_BROWSER` if previously set.
+
+### Method 2: Browser Cookie Extraction (Local/Development Only)
 
 1. **Set Environment Variable**:
 
@@ -36,18 +61,23 @@ The following has been implemented to resolve the "Sign in to confirm you're not
 
 ### For Other Platforms:
 
-Set the environment variable according to your platform:
+**Railway (Cookie File Method):**
+
+```bash
+YT_DLP_COOKIES_FILE=/app/cookies.txt
+```
 
 **Vercel/Netlify:**
 
 ```bash
-YT_DLP_COOKIES_FROM_BROWSER=chrome
+YT_DLP_COOKIES_FILE=/tmp/cookies.txt
 ```
 
 **Docker:**
 
 ```dockerfile
-ENV YT_DLP_COOKIES_FROM_BROWSER=chrome
+COPY cookies.txt /app/cookies.txt
+ENV YT_DLP_COOKIES_FILE=/app/cookies.txt
 ```
 
 **Local Testing:**
@@ -72,27 +102,67 @@ set YT_DLP_COOKIES_FROM_BROWSER=chrome     # Windows
 
 ## 📋 Verification Checklist
 
-- [ ] Environment variable `YT_DLP_COOKIES_FROM_BROWSER` is set
+- [ ] Choose appropriate cookie method (file vs browser)
+- [ ] Environment variable is set correctly
 - [ ] Backend deployment successful
-- [ ] `/api/health` shows cookie configuration
+- [ ] `/api/cookie-status` shows proper configuration
 - [ ] `/api/test-video-extraction` works without errors
 - [ ] Actual video downloads work in production
-- [ ] Frontend displays proper error messages if cookie setup needed
 
 ## 🔧 Troubleshooting
 
-### If still getting bot detection:
+### Error: "could not find chrome cookies database"
 
-1. **Try different browsers**: chrome → firefox → edge
-2. **Check server environment**: Some hosting platforms may not have browser access
-3. **Use cookie file method**: Export cookies manually and use `YT_DLP_COOKIES_FILE`
-4. **Check logs**: Backend now provides detailed cookie status in responses
+**This is the exact error you're experiencing. Solution:**
 
-### Alternative Cookie File Method:
+1. **Remove browser cookie environment variable**:
 
-1. Export cookies from your browser to `cookies.txt`
-2. Upload file to server (secure location)
-3. Set: `YT_DLP_COOKIES_FILE=/path/to/cookies.txt`
+   ```bash
+   # Remove this from Railway
+   YT_DLP_COOKIES_FROM_BROWSER=chrome
+   ```
+
+2. **Use cookie file method instead**:
+
+   ```bash
+   # Generate on your local machine
+   cd backend
+   python generate_cookies.py
+
+   # Upload cookies.txt to Railway
+   # Set this environment variable
+   YT_DLP_COOKIES_FILE=/app/cookies.txt
+   ```
+
+### Other Common Issues:
+
+1. **"Sign in to confirm you're not a bot"**: Cookie authentication not working
+
+   - Regenerate cookies.txt file
+   - Ensure cookies are from a logged-in YouTube session
+   - Check file upload path matches environment variable
+
+2. **Server environment has no browser**: Use cookie file method always for production
+
+3. **Cookie file not found**: Check file path and permissions
+   ```bash
+   # Verify file exists on server
+   ls -la /app/cookies.txt
+   ```
+
+### Quick Fix for Your Current Error:
+
+```bash
+# 1. On your local machine
+cd backend
+pip install browser-cookie3
+python generate_cookies.py
+
+# 2. Upload cookies.txt to Railway
+# 3. In Railway environment variables:
+#    Remove: YT_DLP_COOKIES_FROM_BROWSER
+#    Add: YT_DLP_COOKIES_FILE=/app/cookies.txt
+```
 
 ## 📚 Documentation
 

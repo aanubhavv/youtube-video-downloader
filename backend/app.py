@@ -36,31 +36,47 @@ def get_cookie_options():
     """
     cookie_options = {}
     
-    # Check for cookies from browser (most reliable method)
-    cookies_from_browser = os.getenv('YT_DLP_COOKIES_FROM_BROWSER')
-    if cookies_from_browser:
-        logger.info(f"Using cookies from browser: {cookies_from_browser}")
-        cookie_options['cookiesfrombrowser'] = (cookies_from_browser, None, None, None)
-    
-    # Check for cookie file path
+    # Check for cookie file path first (most reliable for production)
     cookies_file = os.getenv('YT_DLP_COOKIES_FILE')
     if cookies_file and os.path.exists(cookies_file):
         logger.info(f"Using cookies file: {cookies_file}")
         cookie_options['cookiefile'] = cookies_file
+        return cookie_options
     
-    # If no specific cookie config, try common browser locations for production
-    if not cookie_options and os.getenv('FLASK_ENV') == 'production':
-        # Try common browsers in order of preference
-        browsers_to_try = ['chrome', 'firefox', 'edge', 'safari']
-        for browser in browsers_to_try:
-            try:
-                # Test if browser cookies can be accessed
-                cookie_options['cookiesfrombrowser'] = (browser, None, None, None)
-                logger.info(f"Attempting to use {browser} cookies for production")
-                break
-            except Exception as e:
-                logger.warning(f"Failed to access {browser} cookies: {e}")
-                continue
+    # Check for cookies from browser (with validation)
+    cookies_from_browser = os.getenv('YT_DLP_COOKIES_FROM_BROWSER')
+    if cookies_from_browser:
+        # Validate browser cookie access before using
+        try:
+            # Test if we can create a YoutubeDL instance with the browser cookies
+            test_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'cookiesfrombrowser': (cookies_from_browser, None, None, None)
+            }
+            
+            # Quick test without actually extracting anything
+            import yt_dlp
+            with yt_dlp.YoutubeDL(test_opts) as ydl:
+                # Just initialize to test cookie access
+                pass
+                
+            logger.info(f"Successfully validated browser cookies: {cookies_from_browser}")
+            cookie_options['cookiesfrombrowser'] = (cookies_from_browser, None, None, None)
+            
+        except Exception as e:
+            error_msg = str(e)
+            logger.warning(f"Failed to access {cookies_from_browser} cookies: {error_msg}")
+            
+            # If browser cookies fail, suggest cookie file method
+            if "could not find" in error_msg.lower() or "database" in error_msg.lower():
+                logger.warning(f"Browser {cookies_from_browser} not available in this environment. Consider using YT_DLP_COOKIES_FILE instead.")
+    
+    # If no cookies configured and no browser access, log guidance
+    if not cookie_options:
+        if os.getenv('FLASK_ENV') == 'production':
+            logger.warning("No cookie authentication configured for production. This may cause bot detection issues.")
+            logger.warning("Set YT_DLP_COOKIES_FILE environment variable with path to cookies.txt file for production environments.")
     
     return cookie_options
 
@@ -446,7 +462,9 @@ def cookie_status():
                 'YT_DLP_COOKIES_FROM_BROWSER': os.getenv('YT_DLP_COOKIES_FROM_BROWSER'),
                 'YT_DLP_COOKIES_FILE': os.getenv('YT_DLP_COOKIES_FILE')
             },
-            'recommendations': []
+            'recommendations': [],
+            'environment': os.getenv('FLASK_ENV', 'production'),
+            'server_type': 'production' if 'gunicorn' in os.environ.get('SERVER_SOFTWARE', '').lower() else 'development'
         }
         
         if 'cookiesfrombrowser' in cookie_options:
@@ -456,8 +474,19 @@ def cookie_status():
             status['active_method'] = f'Cookie file: {cookie_options["cookiefile"]}'
         else:
             status['active_method'] = 'No cookie authentication configured'
-            status['recommendations'].append('Configure YT_DLP_COOKIES_FROM_BROWSER environment variable')
-            status['recommendations'].append('Supported browsers: chrome, firefox, edge, safari, opera, brave')
+            
+            # Provide environment-specific recommendations
+            if status['environment'] == 'production' or status['server_type'] == 'production':
+                status['recommendations'].extend([
+                    'For production servers: Use YT_DLP_COOKIES_FILE with exported cookies.txt',
+                    'Export cookies from your browser and upload cookies.txt to server',
+                    'Set YT_DLP_COOKIES_FILE=/path/to/cookies.txt environment variable'
+                ])
+            else:
+                status['recommendations'].extend([
+                    'For development: Configure YT_DLP_COOKIES_FROM_BROWSER environment variable',
+                    'Supported browsers: chrome, firefox, edge, safari, opera, brave'
+                ])
         
         # Test yt-dlp instantiation
         try:
@@ -465,14 +494,16 @@ def cookie_status():
                 status['ydl_initialization'] = 'success'
         except Exception as e:
             status['ydl_initialization'] = f'failed: {str(e)}'
-            status['recommendations'].append('Check yt-dlp configuration')
+            if 'could not find' in str(e).lower():
+                status['recommendations'].append('Browser not available in server environment - use cookie file method')
         
         return jsonify(status)
         
     except Exception as e:
         return jsonify({
             'error': f'Failed to check cookie status: {str(e)}',
-            'configured': False
+            'configured': False,
+            'recommendation': 'Use cookie file method for production environments'
         }), 500
 
 @app.route('/api/video-info', methods=['POST'])
