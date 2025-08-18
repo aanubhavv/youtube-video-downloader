@@ -260,7 +260,12 @@ def download_video_async(task_id, url, output_folder, quality='auto'):
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    return jsonify({'status': 'ok', 'message': 'YouTube Downloader API is running'})
+    return jsonify({
+        'status': 'ok', 
+        'message': 'YouTube Downloader API is running',
+        'server': 'Gunicorn Production Server' if 'gunicorn' in os.environ.get('SERVER_SOFTWARE', '').lower() else 'Flask Development Server',
+        'environment': os.getenv('FLASK_ENV', 'production')
+    })
 
 @app.route('/api/video-info', methods=['POST'])
 def get_video_info():
