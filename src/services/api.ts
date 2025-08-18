@@ -1,6 +1,10 @@
 // API service for YouTube Downloader
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
+// Debug logging to check environment variable
+console.log('🔧 API_BASE_URL:', API_BASE_URL);
+console.log('🔧 NEXT_PUBLIC_API_URL env var:', process.env.NEXT_PUBLIC_API_URL);
+
 interface DownloadTask {
   task_id?: string;
   download_id?: string;
