@@ -6,7 +6,6 @@ import tempfile
 import threading
 from datetime import datetime
 import uuid
-import random
 
 app = Flask(__name__)
 
@@ -23,71 +22,46 @@ CORS(app, origins=allowed_origins,
 # Store download status
 download_status = {}
 
-def get_ydl_opts(output_folder=None, format_string='best[height<=1080]/best'):
-    """Get yt-dlp options with anti-bot measures"""
+def get_enhanced_ydl_opts(base_opts=None):
+    """
+    Get enhanced yt-dlp options to minimize bot detection
     
-    # Random user agents to avoid detection
-    user_agents = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    ]
-    
-    selected_ua = random.choice(user_agents)
-    
-    ydl_opts = {
-        'format': format_string,
-        'noplaylist': True,
-        'extract_flat': False,
-        'writeinfojson': False,
-        'writesubtitles': False,
-        'writeautomaticsub': False,
-        'ignoreerrors': False,
+    Args:
+        base_opts (dict): Optional base options to merge with enhanced options
         
-        # Anti-bot measures
-        'user_agent': selected_ua,
-        'sleep_interval': 1,
-        'max_sleep_interval': 3,
-        'sleep_interval_requests': 1,
-        'sleep_interval_subtitles': 1,
-        
-        # Additional headers
+    Returns:
+        dict: Enhanced yt-dlp options
+    """
+    enhanced_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'referer': 'https://www.youtube.com/',
+        'sleep_interval': 2,
+        'max_sleep_interval': 10,
+        'extractor_retries': 5,
+        'fragment_retries': 5,
+        'socket_timeout': 30,
+        'http_chunk_size': 10485760,  # 10MB chunks
+        'retry_sleep_functions': {
+            'http': lambda n: min(4 ** n, 100),
+            'fragment': lambda n: min(4 ** n, 100),
+            'extractor': lambda n: min(4 ** n, 100)
+        },
         'http_headers': {
-            'User-Agent': selected_ua,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'en-us,en;q=0.5',
             'Accept-Encoding': 'gzip,deflate',
             'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
             'Keep-Alive': '300',
             'Connection': 'keep-alive',
-        },
-        
-        # Retry options
-        'retries': 3,
-        'fragment_retries': 3,
-        'extractor_retries': 3,
-        
-        # Use IPv4 only (sometimes helps)
-        'force_ipv4': True,
-        
-        # YouTube specific options
-        'extractor_args': {
-            'youtube': {
-                'skip': ['dash', 'hls'],  # Skip DASH and HLS formats sometimes helps
-                'player_skip': ['configs'],  # Skip player config
-            }
-        },
-        
-        # Disable DASH manifest
-        'youtube_include_dash_manifest': False,
+        }
     }
     
-    # Add output template if folder specified
-    if output_folder:
-        ydl_opts['outtmpl'] = os.path.join(output_folder, '%(title)s.%(ext)s')
+    if base_opts:
+        enhanced_opts.update(base_opts)
     
-    return ydl_opts
+    return enhanced_opts
 
 def get_best_formats(info):
     """
@@ -249,11 +223,8 @@ def download_video_async(task_id, url, output_folder, quality='auto'):
         download_status[task_id]['status'] = 'extracting_info'
         download_status[task_id]['message'] = 'Extracting video information...'
         
-        # Get video info first with anti-bot measures
-        ydl_opts_info = get_ydl_opts()
-        ydl_opts_info['quiet'] = True
-        
-        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
+        # Get video info first
+        with yt_dlp.YoutubeDL(get_enhanced_ydl_opts()) as ydl:
             info = ydl.extract_info(url, download=False)
             title = info.get('title', 'Unknown')
             duration = info.get('duration', 0)
@@ -289,8 +260,12 @@ def download_video_async(task_id, url, output_folder, quality='auto'):
         download_status[task_id]['status'] = 'downloading'
         download_status[task_id]['message'] = 'Downloading video...'
         
-        # Configure yt_dlp options with anti-bot measures
-        ydl_opts = get_ydl_opts(output_folder, format_string)
+        # Configure yt_dlp options
+        ydl_opts = get_enhanced_ydl_opts({
+            'outtmpl': os.path.join(output_folder, '%(title)s.%(ext)s'),
+            'format': format_string,
+            'noplaylist': True,
+        })
         
         # Only add merge format if we're combining formats
         if '+' in format_string:
@@ -330,8 +305,54 @@ def health_check():
         'status': 'ok', 
         'message': 'YouTube Downloader API is running',
         'server': 'Gunicorn Production Server' if 'gunicorn' in os.environ.get('SERVER_SOFTWARE', '').lower() else 'Flask Development Server',
-        'environment': os.getenv('FLASK_ENV', 'production')
+        'environment': os.getenv('FLASK_ENV', 'production'),
+        'version': '1.1.0',  # Updated version with enhanced anti-bot measures
+        'features': {
+            'enhanced_anti_bot': True,
+            'rate_limit_handling': True,
+            'browser_headers': True
+        }
     })
+
+@app.route('/api/test-video-extraction', methods=['GET'])
+def test_video_extraction():
+    """Test endpoint to verify yt-dlp configuration works"""
+    try:
+        # Use a known working video URL for testing
+        test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Rick Roll - commonly used for testing
+        
+        ydl_opts = get_enhanced_ydl_opts()
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(test_url, download=False)
+            
+            return jsonify({
+                'success': True,
+                'title': info.get('title', 'N/A'),
+                'duration': info.get('duration', 0),
+                'uploader': info.get('uploader', 'N/A'),
+                'configuration': {
+                    'user_agent': ydl_opts.get('user_agent', 'N/A'),
+                    'sleep_interval': ydl_opts.get('sleep_interval', 0),
+                    'extractor_retries': ydl_opts.get('extractor_retries', 0),
+                    'has_custom_headers': bool(ydl_opts.get('http_headers'))
+                }
+            })
+    except Exception as e:
+        error_msg = str(e)
+        if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
+            return jsonify({
+                'success': False,
+                'error': 'Bot detection triggered',
+                'message': 'YouTube is blocking requests. This confirms our detection logic works.',
+                'retry_recommended': True
+            }), 429
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Extraction failed',
+                'message': error_msg
+            }), 500
 
 @app.route('/api/video-info', methods=['POST'])
 def get_video_info():
@@ -343,10 +364,14 @@ def get_video_info():
         if not url:
             return jsonify({'error': 'URL is required'}), 400
         
-        # Get video info with anti-bot measures
-        ydl_opts = get_ydl_opts()
-        ydl_opts['quiet'] = True
+        # Enhanced yt-dlp configuration to avoid bot detection
+        ydl_opts = get_enhanced_ydl_opts({
+            'extract_flat': False,
+            'writethumbnail': False,
+            'writeinfojson': False
+        })
         
+        # Get video info
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             
@@ -381,7 +406,15 @@ def get_video_info():
             return jsonify(response)
     
     except Exception as e:
-        return jsonify({'error': f'Failed to get video info: {str(e)}'}), 500
+        error_msg = str(e)
+        if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
+            return jsonify({
+                'error': 'YouTube is temporarily blocking requests. Please try again in a few minutes.',
+                'retry_after': 300,  # Suggest retry after 5 minutes
+                'type': 'rate_limit'
+            }), 429
+        else:
+            return jsonify({'error': f'Failed to extract video info: {error_msg}'}), 500
 
 @app.route('/api/download-direct', methods=['POST'])
 def start_direct_download():
@@ -407,9 +440,8 @@ def start_direct_download():
             'started_at': datetime.now().isoformat()
         }
 
-        # Get video info first to get title and analyze formats with anti-bot measures
-        ydl_opts_info = get_ydl_opts()
-        ydl_opts_info['quiet'] = True
+        # Get video info first to get title and analyze formats
+        ydl_opts_info = get_enhanced_ydl_opts()
         
         with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -487,7 +519,15 @@ def start_direct_download():
         })
     
     except Exception as e:
-        return jsonify({'error': f'Failed to prepare download: {str(e)}'}), 500
+        error_msg = str(e)
+        if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
+            return jsonify({
+                'error': 'YouTube is temporarily blocking requests. Please try again in a few minutes.',
+                'retry_after': 300,  # Suggest retry after 5 minutes
+                'type': 'rate_limit'
+            }), 429
+        else:
+            return jsonify({'error': f'Failed to prepare download: {error_msg}'}), 500
 
 @app.route('/api/download-stream/<download_id>')
 def stream_download(download_id):
@@ -528,21 +568,19 @@ def stream_download(download_id):
                 
                 print(f"DEBUG: Using analyzed format: {format_string}")
                 
-                # Download to temporary directory with safe filename and anti-bot measures
-                ydl_opts = get_ydl_opts(output_folder=None, format_string=format_string)
-                ydl_opts['outtmpl'] = os.path.join(temp_dir, f'{safe_title}.%(ext)s')
+                # Download to temporary directory with safe filename
+                ydl_opts = get_enhanced_ydl_opts({
+                    'outtmpl': os.path.join(temp_dir, f'{safe_title}.%(ext)s'),
+                    'format': format_string,
+                    'noplaylist': True,
+                    'writeinfojson': False,
+                    'writesubtitles': False,
+                    'writeautomaticsub': False,
+                    'ignoreerrors': False,
+                })
                 
                 # Add merge format if combining video and audio
                 if '+' in format_string:
-                    try:
-                        import subprocess
-                        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-                        ydl_opts['merge_output_format'] = 'mp4'
-                        print("DEBUG: FFmpeg available - will merge formats")
-                    except (subprocess.CalledProcessError, FileNotFoundError):
-                        print("DEBUG: FFmpeg not found - using fallback format")
-                        # Fallback to a simpler format selection
-                        ydl_opts['format'] = 'best[height<=1080]/best'
                     try:
                         import subprocess
                         subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
