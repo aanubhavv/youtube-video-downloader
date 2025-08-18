@@ -297,11 +297,27 @@ def get_enhanced_ydl_opts(base_opts=None):
         # More conservative approach to avoid triggering bot detection
         'extract_flat': False,
         'ignoreerrors': False,
+        # Add more debugging options for player response issues
+        'verbose': base_opts.get('debug_mode', False),
+        'writesubtitles': False,
+        'writeautomaticsub': False,
+        'writethumbnail': False,
     }
     
     # Add cookie options to prevent bot detection
     cookie_options = get_cookie_options()
     enhanced_opts.update(cookie_options)
+    
+    # Add additional YouTube-specific options to handle player response issues
+    enhanced_opts.update({
+        # YouTube-specific headers that might help with player response
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web'],  # Try multiple clients
+                'player_skip': ['webpage', 'configs'],  # Skip some checks that might fail
+            }
+        }
+    })
     
     if base_opts:
         enhanced_opts.update(base_opts)
@@ -718,75 +734,145 @@ def health_check():
         }
     })
 
-@app.route('/api/test-video-extraction', methods=['GET'])
-def test_video_extraction():
-    """Test endpoint to verify yt-dlp configuration works with cookies"""
+@app.route('/api/debug-extraction', methods=['POST'])
+def debug_extraction():
+    """Debug endpoint to test extraction with detailed logging"""
     try:
-        # Check rate limiting for test requests
-        allowed, wait_time = check_rate_limit('test')
-        if not allowed:
-            logger.warning(f"Test rate limit hit, suggested wait time: {wait_time} seconds")
-            return jsonify({
-                'success': False,
-                'error': 'Test rate limit exceeded',
-                'retry_after': int(wait_time),
-                'type': 'rate_limit',
-                'message': f'Too many test requests. Please wait {int(wait_time)} seconds before testing again.',
-                'limit_info': f'Limit: {RATE_LIMITS["test"]["requests"]} tests per {RATE_LIMITS["test"]["window"]} seconds'
-            }), 429
+        data = request.get_json()
+        url = data.get('url', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ')
         
-        # Use a known working video URL for testing
-        test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Rick Roll - commonly used for testing
+        if not url:
+            return jsonify({'error': 'URL is required'}), 400
         
-        # Add adaptive delay before making the request
-        adaptive_sleep_before_request('test')
+        debug_info = {
+            'url': url,
+            'timestamp': datetime.now().isoformat(),
+            'attempts': [],
+            'cookie_info': {}
+        }
         
-        ydl_opts = get_enhanced_ydl_opts()
+        # Check cookie status first
         cookie_options = get_cookie_options()
+        local_cookies = os.path.join(os.path.dirname(__file__), 'cookies.txt')
         
-        logger.info(f"Testing video extraction with cookie options: {list(cookie_options.keys())}")
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(test_url, download=False)
-            
-            return jsonify({
-                'success': True,
-                'title': info.get('title', 'N/A'),
-                'duration': info.get('duration', 0),
-                'uploader': info.get('uploader', 'N/A'),
-                'configuration': {
-                    'user_agent': ydl_opts.get('user_agent', 'N/A'),
-                    'sleep_interval': ydl_opts.get('sleep_interval', 0),
-                    'extractor_retries': ydl_opts.get('extractor_retries', 0),
-                    'has_custom_headers': bool(ydl_opts.get('http_headers')),
-                    'cookie_options': list(cookie_options.keys()),
-                    'cookies_from_browser': cookie_options.get('cookiesfrombrowser', [None])[0] if 'cookiesfrombrowser' in cookie_options else None,
-                    'cookies_file': cookie_options.get('cookiefile') if 'cookiefile' in cookie_options else None
-                }
-            })
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Test extraction failed: {error_msg}")
-        
-        if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
-            cookie_options = get_cookie_options()
-            return jsonify({
-                'success': False,
-                'error': 'Bot detection triggered - cookie authentication needed',
-                'message': 'YouTube is blocking requests. Configure cookie authentication.',
-                'cookie_status': {
-                    'configured': bool(cookie_options),
-                    'options': list(cookie_options.keys()) if cookie_options else [],
-                    'suggestion': 'Set YT_DLP_COOKIES_FROM_BROWSER environment variable (e.g., chrome, firefox)'
-                },
-                'retry_recommended': True
-            }), 429
+        if os.path.exists(local_cookies):
+            is_valid, message = validate_cookies_file(local_cookies)
+            debug_info['cookie_info'] = {
+                'file_exists': True,
+                'file_path': local_cookies,
+                'file_size': os.path.getsize(local_cookies),
+                'validation': {'valid': is_valid, 'message': message},
+                'modified_hours_ago': (time.time() - os.path.getmtime(local_cookies)) / 3600
+            }
         else:
-            return jsonify({
+            debug_info['cookie_info'] = {'file_exists': False}
+        
+        # Try multiple extraction strategies
+        strategies = [
+            {
+                'name': 'Default with cookies',
+                'opts': get_enhanced_ydl_opts()
+            },
+            {
+                'name': 'Android client fallback',
+                'opts': get_enhanced_ydl_opts({
+                    'extractor_args': {
+                        'youtube': {
+                            'player_client': ['android'],
+                        }
+                    }
+                })
+            },
+            {
+                'name': 'Web client with minimal headers',
+                'opts': get_enhanced_ydl_opts({
+                    'user_agent': 'Mozilla/5.0 (compatible)',
+                    'extractor_args': {
+                        'youtube': {
+                            'player_client': ['web'],
+                        }
+                    }
+                })
+            },
+            {
+                'name': 'No cookies fallback',
+                'opts': {
+                    'quiet': True,
+                    'no_warnings': True,
+                    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'extractor_args': {
+                        'youtube': {
+                            'player_client': ['android', 'web'],
+                        }
+                    }
+                }
+            }
+        ]
+        
+        for strategy in strategies:
+            attempt = {
+                'strategy': strategy['name'],
                 'success': False,
-                'error': 'Extraction failed',
-                'message': error_msg
-            }), 500
+                'error': None,
+                'info': None
+            }
+            
+            try:
+                logger.info(f"Trying extraction strategy: {strategy['name']}")
+                
+                with yt_dlp.YoutubeDL(strategy['opts']) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    
+                    attempt['success'] = True
+                    attempt['info'] = {
+                        'title': info.get('title', 'N/A'),
+                        'duration': info.get('duration', 0),
+                        'uploader': info.get('uploader', 'N/A'),
+                        'format_count': len(info.get('formats', [])),
+                        'has_thumbnail': bool(info.get('thumbnail')),
+                        'age_limit': info.get('age_limit', 0)
+                    }
+                    
+                    debug_info['attempts'].append(attempt)
+                    logger.info(f"Strategy '{strategy['name']}' succeeded!")
+                    
+                    # If we found a working strategy, return success
+                    return jsonify({
+                        'success': True,
+                        'working_strategy': strategy['name'],
+                        'video_info': attempt['info'],
+                        'debug_info': debug_info
+                    })
+                    
+            except Exception as e:
+                attempt['error'] = str(e)
+                attempt['error_type'] = type(e).__name__
+                debug_info['attempts'].append(attempt)
+                logger.warning(f"Strategy '{strategy['name']}' failed: {str(e)}")
+                
+                # Don't break, try next strategy
+                continue
+        
+        # If all strategies failed
+        return jsonify({
+            'success': False,
+            'message': 'All extraction strategies failed',
+            'debug_info': debug_info,
+            'recommendations': [
+                'Check if cookies.txt contains fresh, valid YouTube cookies',
+                'Ensure you are logged into YouTube.com in your browser',
+                'Try using a VPN if YouTube is blocking your IP',
+                'Wait 15-30 minutes before trying again (rate limiting)',
+                'Update yt-dlp to the latest version: pip install -U yt-dlp'
+            ]
+        }), 500
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Debug extraction failed: {str(e)}',
+            'type': 'debug_error'
+        }), 500
 
 @app.route('/api/cookie-status', methods=['GET'])
 def cookie_status():
@@ -957,23 +1043,86 @@ def get_video_info():
         # Add adaptive delay before making the request
         adaptive_sleep_before_request('video_info')
         
-        # Enhanced yt-dlp configuration to avoid bot detection
-        ydl_opts = get_enhanced_ydl_opts({
-            'extract_flat': False,
-            'writethumbnail': False,
-            'writeinfojson': False
-        })
+        logger.info(f"Extracting video info for: {url}")
         
-        # Get video info
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            
-            # Get format analysis for different qualities with error handling
+        # Try multiple extraction strategies if the primary one fails
+        extraction_strategies = [
+            {
+                'name': 'primary',
+                'opts': get_enhanced_ydl_opts({
+                    'extract_flat': False,
+                    'writethumbnail': False,
+                    'writeinfojson': False
+                })
+            },
+            {
+                'name': 'android_client',
+                'opts': get_enhanced_ydl_opts({
+                    'extract_flat': False,
+                    'writethumbnail': False,
+                    'writeinfojson': False,
+                    'extractor_args': {
+                        'youtube': {
+                            'player_client': ['android'],
+                        }
+                    }
+                })
+            },
+            {
+                'name': 'web_fallback',
+                'opts': get_enhanced_ydl_opts({
+                    'extract_flat': False,
+                    'writethumbnail': False,
+                    'writeinfojson': False,
+                    'user_agent': 'Mozilla/5.0 (compatible)',
+                    'extractor_args': {
+                        'youtube': {
+                            'player_client': ['web'],
+                        }
+                    }
+                })
+            }
+        ]
+        
+        last_error = None
+        info = None
+        
+        for strategy in extraction_strategies:
             try:
-                auto_video_id, auto_audio_id, format_info = get_format_for_quality(info, 'auto')
+                logger.info(f"Trying {strategy['name']} extraction strategy")
+                
+                # Get video info
+                with yt_dlp.YoutubeDL(strategy['opts']) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    logger.info(f"Successfully extracted info using {strategy['name']} strategy")
+                    break  # Success, exit the loop
+                    
             except Exception as e:
-                logger.warning(f"Auto format analysis failed: {e}")
-                auto_video_id, auto_audio_id, format_info = None, None, {}
+                last_error = str(e)
+                logger.warning(f"{strategy['name']} strategy failed: {last_error}")
+                
+                # If this was a player response error, try next strategy
+                if 'Failed to extract any player response' in last_error:
+                    continue
+                # If it's a bot detection error, don't try other strategies
+                elif any(phrase in last_error.lower() for phrase in ['sign in to confirm', 'bot', 'blocked']):
+                    break
+                else:
+                    continue
+        
+        # If all strategies failed, handle the error
+        if info is None:
+            if last_error:
+                raise Exception(last_error)
+            else:
+                raise Exception("All extraction strategies failed")
+        
+        # Get format analysis for different qualities with error handling
+        try:
+            auto_video_id, auto_audio_id, format_info = get_format_for_quality(info, 'auto')
+        except Exception as e:
+            logger.warning(f"Auto format analysis failed: {e}")
+            auto_video_id, auto_audio_id, format_info = None, None, {}
             
             try:
                 p1080_video_id, p1080_audio_id, p1080_format_info = get_format_for_quality(info, 'best[height<=1080]')
@@ -1029,8 +1178,47 @@ def get_video_info():
         error_msg = str(e)
         logger.error(f"Video info extraction failed: {error_msg}")
         
-        # Check for different types of errors
-        if any(phrase in error_msg.lower() for phrase in ['sign in to confirm', 'bot', 'blocked', '429']):
+        # Enhanced error categorization and handling
+        if 'Failed to extract any player response' in error_msg:
+            # This is the specific error you're encountering
+            cookie_options = get_cookie_options()
+            local_cookies = os.path.join(os.path.dirname(__file__), 'cookies.txt')
+            
+            cookie_analysis = {
+                'has_cookies': bool(cookie_options),
+                'cookie_file_exists': os.path.exists(local_cookies),
+                'validation': None
+            }
+            
+            if os.path.exists(local_cookies):
+                is_valid, message = validate_cookies_file(local_cookies)
+                cookie_analysis['validation'] = {
+                    'is_valid': is_valid,
+                    'message': message,
+                    'file_age_hours': (time.time() - os.path.getmtime(local_cookies)) / 3600
+                }
+            
+            return jsonify({
+                'error': 'YouTube player response extraction failed',
+                'type': 'player_response_error',
+                'retry_after': 300,  # 5 minutes
+                'cookie_analysis': cookie_analysis,
+                'solutions': [
+                    '1. Update your cookies: Export fresh cookies from YouTube.com while logged in',
+                    '2. Use the debug endpoint: POST /api/debug-extraction to test different strategies',
+                    '3. Wait 15-30 minutes: YouTube may be temporarily blocking requests',
+                    '4. Check YouTube status: The video might be private, deleted, or region-blocked',
+                    '5. Try a different video: Some videos have enhanced protection'
+                ],
+                'debug_endpoint': '/api/debug-extraction',
+                'technical_details': {
+                    'error': 'YouTube changed their player response structure or enhanced bot detection',
+                    'yt_dlp_version': '2025.8.11',
+                    'suggested_action': 'Export fresh cookies and use debug endpoint to test'
+                }
+            }), 503  # Service Unavailable
+            
+        elif any(phrase in error_msg.lower() for phrase in ['sign in to confirm', 'bot', 'blocked', '429']):
             cookie_options = get_cookie_options()
             
             # Provide detailed troubleshooting information
