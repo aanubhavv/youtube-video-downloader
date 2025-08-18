@@ -305,8 +305,54 @@ def health_check():
         'status': 'ok', 
         'message': 'YouTube Downloader API is running',
         'server': 'Gunicorn Production Server' if 'gunicorn' in os.environ.get('SERVER_SOFTWARE', '').lower() else 'Flask Development Server',
-        'environment': os.getenv('FLASK_ENV', 'production')
+        'environment': os.getenv('FLASK_ENV', 'production'),
+        'version': '1.1.0',  # Updated version with enhanced anti-bot measures
+        'features': {
+            'enhanced_anti_bot': True,
+            'rate_limit_handling': True,
+            'browser_headers': True
+        }
     })
+
+@app.route('/api/test-video-extraction', methods=['GET'])
+def test_video_extraction():
+    """Test endpoint to verify yt-dlp configuration works"""
+    try:
+        # Use a known working video URL for testing
+        test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Rick Roll - commonly used for testing
+        
+        ydl_opts = get_enhanced_ydl_opts()
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(test_url, download=False)
+            
+            return jsonify({
+                'success': True,
+                'title': info.get('title', 'N/A'),
+                'duration': info.get('duration', 0),
+                'uploader': info.get('uploader', 'N/A'),
+                'configuration': {
+                    'user_agent': ydl_opts.get('user_agent', 'N/A'),
+                    'sleep_interval': ydl_opts.get('sleep_interval', 0),
+                    'extractor_retries': ydl_opts.get('extractor_retries', 0),
+                    'has_custom_headers': bool(ydl_opts.get('http_headers'))
+                }
+            })
+    except Exception as e:
+        error_msg = str(e)
+        if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
+            return jsonify({
+                'success': False,
+                'error': 'Bot detection triggered',
+                'message': 'YouTube is blocking requests. This confirms our detection logic works.',
+                'retry_recommended': True
+            }), 429
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Extraction failed',
+                'message': error_msg
+            }), 500
 
 @app.route('/api/video-info', methods=['POST'])
 def get_video_info():
