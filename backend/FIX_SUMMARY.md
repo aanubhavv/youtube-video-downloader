@@ -72,3 +72,20 @@ Your `cookies.txt` file had **over 200 YouTube cookies** including dozens of old
 - Various helper scripts for future maintenance
 
 **The 429 error should now be resolved!** 🎉
+
+## 🚀 Railway Production Deployment Issue
+
+If you're still getting errors in Railway, it's because Railway needs the environment variable:
+
+### Quick Fix for Railway:
+
+1. Go to Railway Dashboard → Your Project → Backend Service → Variables
+2. Add: `YT_DLP_COOKIES_FILE` = `/app/cookies.txt`
+3. Click "Deploy"
+
+See `RAILWAY_COOKIE_SETUP.md` for detailed instructions.
+
+## Files Created:
+
+- `RAILWAY_COOKIE_SETUP.md` - Railway deployment guide
+- Various helper scripts for cookie management

@@ -61,9 +61,30 @@ def get_cookie_options():
     # Check for cookie file path first (most reliable for production)
     cookies_file = os.getenv('YT_DLP_COOKIES_FILE')
     if cookies_file and os.path.exists(cookies_file):
-        logger.info(f"Using cookies file: {cookies_file}")
+        logger.info(f"Using cookies file from environment: {cookies_file}")
         cookie_options['cookiefile'] = cookies_file
         return cookie_options
+    
+    # Check for local cookies.txt file in the same directory
+    local_cookies = os.path.join(os.path.dirname(__file__), 'cookies.txt')
+    if os.path.exists(local_cookies):
+        logger.info(f"Using local cookies file: {local_cookies}")
+        cookie_options['cookiefile'] = local_cookies
+        return cookie_options
+    
+    # Alternative: Check for cookies content as environment variable
+    cookies_content = os.getenv('YOUTUBE_COOKIES_CONTENT')
+    if cookies_content:
+        # Write cookies content to a temporary file
+        temp_cookies_path = '/tmp/cookies.txt'
+        try:
+            with open(temp_cookies_path, 'w') as f:
+                f.write(cookies_content)
+            logger.info(f"Using cookies from environment content: {temp_cookies_path}")
+            cookie_options['cookiefile'] = temp_cookies_path
+            return cookie_options
+        except Exception as e:
+            logger.error(f"Failed to write cookies from environment: {e}")
     
     # Check for cookies from browser (with validation)
     cookies_from_browser = os.getenv('YT_DLP_COOKIES_FROM_BROWSER')
