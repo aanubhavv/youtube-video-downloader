@@ -84,9 +84,12 @@ Frontend will run at: http://localhost:3000
 
 ## API Endpoints
 
-- `GET /api/health` - Health check
+- `GET /api/health` - Health check with cookie configuration status
+- `GET /api/cookie-status` - Detailed cookie configuration and instructions
+- `GET /api/test-video-extraction` - Test YouTube access with current configuration
 - `POST /api/video-info` - Get video information
-- `POST /api/download` - Start video download
+- `POST /api/download-direct` - Start direct download
+- `GET /api/download-stream/<download_id>` - Stream video download
 - `GET /api/download-status/<task_id>` - Check download status
 - `GET /api/downloads` - Get all download statuses
 
@@ -128,7 +131,102 @@ webapp/
 
 ## Troubleshooting
 
-### Common Issues
+### YouTube Bot Detection (Common Issue)
+
+**Error**: `Sign in to confirm you're not a bot. Use --cookies-from-browser or --cookies for the authentication`
+
+This error occurs when YouTube detects automated requests from your server (especially cloud platforms like Railway, Vercel, or Heroku). Here's how to fix it:
+
+#### Solution 1: Export Browser Cookies (Recommended)
+
+1. **Install a cookie export extension**:
+
+   - Chrome: [Get cookies.txt LOCALLY](https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)
+   - Firefox: [cookies.txt](https://addons.mozilla.org/en-US/firefox/addon/cookies-txt/)
+
+2. **Export YouTube cookies**:
+
+   - Visit YouTube and log in to your account
+   - Use the extension to export cookies for `youtube.com`
+   - Copy the entire cookie content
+
+3. **Configure environment variables**:
+
+   For Railway/Production:
+
+   ```bash
+   # Add this as an environment variable in your Railway dashboard
+   YOUTUBE_COOKIES_RAW=# Netscape HTTP Cookie File
+   # Paste your entire exported cookie content here
+   .youtube.com	TRUE	/	FALSE	1234567890	cookie_name	cookie_value
+   # ... rest of cookies
+   ```
+
+   For Local Development:
+
+   ```bash
+   # Create a .env file in the backend directory
+   YOUTUBE_COOKIES_RAW=your_exported_cookies_here
+   ```
+
+#### Solution 2: Browser Auto-Extraction (Local Only)
+
+```bash
+# Set browser name for automatic extraction
+YOUTUBE_COOKIES_BROWSER=chrome
+# Supports: chrome, firefox, edge, safari, chromium
+```
+
+**Note**: This only works for local deployments where the browser is on the same machine.
+
+#### Solution 3: Cookie File Path (Local Only)
+
+```bash
+# Path to a cookie file
+YOUTUBE_COOKIES_FILE=/path/to/your/cookies.txt
+```
+
+#### Deployment on Railway
+
+1. Go to your Railway project dashboard
+2. Click on your service → Variables tab
+3. Add the environment variable:
+   - Key: `YOUTUBE_COOKIES_RAW`
+   - Value: Your exported cookie content
+4. Redeploy the service
+
+#### Checking Cookie Status
+
+Visit `/api/cookie-status` endpoint to verify your configuration:
+
+- Local: http://localhost:5000/api/cookie-status
+- Production: https://your-app.railway.app/api/cookie-status
+
+#### Testing Cookies Locally
+
+Use the included test script to verify your cookies work before deploying:
+
+```bash
+# Windows
+set YOUTUBE_COOKIES_RAW=your_cookie_content_here
+python test-cookies.py
+
+# Linux/Mac
+export YOUTUBE_COOKIES_RAW="your_cookie_content_here"
+python test-cookies.py
+
+# For help
+python test-cookies.py --help
+```
+
+#### Important Notes
+
+- Cookies expire periodically (usually 1-2 months)
+- You'll need to refresh cookies when they expire
+- Keep cookies secure - don't share them publicly
+- Use cookies from the same region as your server when possible
+
+### Other Common Issues
 
 1. **Import errors in frontend**
 

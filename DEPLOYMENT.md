@@ -24,10 +24,57 @@ Before you start, make sure you have:
 ### 1.2 Configure Environment Variables
 
 1. In your Railway project dashboard, click on **"Variables"** tab
-2. Add these environment variables:
+2. Add these **required** environment variables:
+
    - `PORT` = `5000` (Railway will override this automatically)
    - `FRONTEND_URL` = `https://your-app.vercel.app` (you'll update this after Vercel deployment)
    - `FLASK_ENV` = `production`
+
+3. Add **YouTube cookie authentication** (Required to prevent bot detection):
+   - `YOUTUBE_COOKIES_RAW` = (Your exported YouTube cookies - see instructions below)
+
+#### 🍪 YouTube Cookie Setup (Critical Step)
+
+YouTube blocks automated requests from cloud servers. To bypass this:
+
+1. **Export cookies from your browser:**
+
+   - Install: [Get cookies.txt LOCALLY](https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) (Chrome)
+   - Or: [cookies.txt](https://addons.mozilla.org/en-US/firefox/addon/cookies-txt/) (Firefox)
+
+2. **Get YouTube cookies:**
+
+   - Visit YouTube and log into your account
+   - Use the extension to export cookies for `youtube.com`
+   - Copy the entire cookie text content
+
+3. **Add to Railway:**
+
+   - Variable Key: `YOUTUBE_COOKIES_RAW`
+   - Variable Value: Paste the entire cookie content (including headers)
+   - Example format:
+
+   ```
+   # Netscape HTTP Cookie File
+   .youtube.com	TRUE	/	FALSE	1234567890	cookie_name	cookie_value
+   .youtube.com	TRUE	/	TRUE	1234567890	session_token	abc123
+   ```
+
+   **⚠️ Important:** Cookie content should start with `# Netscape HTTP Cookie File` header
+
+4. **Test your cookies locally (optional but recommended):**
+
+   ```bash
+   # Set environment variable with your cookies
+   set YOUTUBE_COOKIES_RAW=your_cookie_content
+
+   # Run test script
+   python test-cookies.py
+   ```
+
+5. **Alternative options** (if needed):
+   - `YOUTUBE_COOKIES_BROWSER` = `chrome` (only works for local deployments)
+   - `YOUTUBE_COOKIES_FILE` = `/path/to/cookies.txt` (only works for local deployments)
 
 ### 1.3 Get Your Railway URL
 
@@ -79,8 +126,15 @@ Railway should automatically redeploy when you update environment variables. If 
 
 ## ✅ Step 4: Test Your Deployed Application
 
-1. **Visit your Vercel URL**
-2. **Test the functionality:**
+1. **Test cookie configuration first:**
+
+   - Visit: `https://your-railway-app.up.railway.app/api/cookie-status`
+   - Verify `has_cookies: true` in the response
+   - Visit: `https://your-railway-app.up.railway.app/api/test-video-extraction`
+   - Should return successful video info without bot detection
+
+2. **Visit your Vercel URL**
+3. **Test the functionality:**
    - Paste a YouTube URL
    - Check if video info loads
    - Test download functionality
@@ -94,6 +148,9 @@ Railway should automatically redeploy when you update environment variables. If 
 PORT=5000
 FRONTEND_URL=https://your-actual-app.vercel.app
 FLASK_ENV=production
+YOUTUBE_COOKIES_RAW=# Netscape HTTP Cookie File
+# Your exported YouTube cookies here
+.youtube.com	TRUE	/	FALSE	1234567890	cookie_name	value
 ```
 
 ### Vercel Environment Variables:
@@ -106,23 +163,37 @@ NEXT_PUBLIC_API_URL=https://your-railway-app.up.railway.app
 
 ### Common Issues:
 
-1. **CORS Errors:**
+1. **YouTube Bot Detection Error (Most Common):**
+
+   ```
+   ERROR: Sign in to confirm you're not a bot
+   ```
+
+   **Solution:**
+
+   - Ensure `YOUTUBE_COOKIES_RAW` is properly set in Railway
+   - Export fresh cookies from a logged-in YouTube session
+   - Check cookie format (must include Netscape headers)
+   - Test with `/api/cookie-status` endpoint
+   - Cookies expire every 1-2 months - refresh periodically
+
+2. **CORS Errors:**
 
    - Double-check your URLs in environment variables
    - Make sure Railway has the correct Vercel URL
    - Make sure Vercel has the correct Railway URL
 
-2. **500 Server Errors:**
+3. **500 Server Errors:**
 
    - Check Railway deployment logs
    - Go to Railway dashboard → "Deployments" → "View Logs"
 
-3. **Build Failures:**
+4. **Build Failures:**
 
    - Ensure all dependencies are in `requirements.txt`
    - Check if Dockerfile is properly configured
 
-4. **Environment Variables Not Working:**
+5. **Environment Variables Not Working:**
    - Make sure environment variables are set correctly
    - Try redeploying after making changes
    - Check variable names match exactly (case-sensitive)
@@ -146,7 +217,9 @@ NEXT_PUBLIC_API_URL=https://your-railway-app.up.railway.app
 
 After deployment, test these features:
 
-- [ ] Video info fetching works
+- [ ] **Cookie configuration working** (`/api/cookie-status` shows `has_cookies: true`)
+- [ ] **YouTube access working** (`/api/test-video-extraction` returns video info)
+- [ ] Video info fetching works without bot detection errors
 - [ ] Direct download to device works
 - [ ] Server download works
 - [ ] Download progress tracking works

@@ -101,7 +101,21 @@ export const api = {
     if (!response.ok) {
       const error = await response.json();
       
-      // Handle rate limiting specifically
+      // Handle bot detection specifically
+      if (response.status === 429 && error.type === 'bot_detection') {
+        const guidance = error.guidance;
+        let message = 'YouTube bot detection triggered. ';
+        
+        if (!error.cookie_status?.has_cookies) {
+          message += 'Cookie authentication is required. Please check the deployment guide for cookie setup instructions.';
+        } else {
+          message += 'Your cookies may be expired. Please refresh them and redeploy.';
+        }
+        
+        throw new Error(message);
+      }
+      
+      // Handle general rate limiting
       if (response.status === 429) {
         throw new Error(`YouTube is temporarily blocking requests. Please wait ${Math.ceil((error.retry_after || 300) / 60)} minutes and try again.`);
       }
@@ -124,7 +138,12 @@ export const api = {
     if (!response.ok) {
       const error = await response.json();
       
-      // Handle rate limiting specifically
+      // Handle bot detection specifically
+      if (response.status === 429 && error.type === 'bot_detection') {
+        throw new Error('YouTube bot detection triggered. Please check cookie configuration in your deployment settings.');
+      }
+      
+      // Handle general rate limiting
       if (response.status === 429) {
         throw new Error(`YouTube is temporarily blocking requests. Please wait ${Math.ceil((error.retry_after || 300) / 60)} minutes and try again.`);
       }
@@ -147,7 +166,12 @@ export const api = {
     if (!response.ok) {
       const error = await response.json();
       
-      // Handle rate limiting specifically
+      // Handle bot detection specifically
+      if (response.status === 429 && error.type === 'bot_detection') {
+        throw new Error('YouTube bot detection triggered. Please check cookie configuration in your deployment settings.');
+      }
+      
+      // Handle general rate limiting
       if (response.status === 429) {
         throw new Error(`YouTube is temporarily blocking requests. Please wait ${Math.ceil((error.retry_after || 300) / 60)} minutes and try again.`);
       }
