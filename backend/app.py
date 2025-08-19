@@ -6,6 +6,8 @@ import tempfile
 import threading
 from datetime import datetime
 import uuid
+import subprocess
+import sys
 
 app = Flask(__name__)
 
@@ -446,7 +448,61 @@ def test_video_extraction():
                 'message': error_msg
             }), 500
 
-@app.route('/api/cookie-status', methods=['GET'])
+@app.route('/api/system-status', methods=['GET'])
+def get_system_status():
+    """Get system status including yt-dlp version and other diagnostics"""
+    try:
+        # Get yt-dlp version
+        ytdlp_version = yt_dlp.version.__version__
+        
+        # Check if ffmpeg is available
+        ffmpeg_available = False
+        ffmpeg_version = 'Not available'
+        try:
+            result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                ffmpeg_available = True
+                # Extract version from first line
+                first_line = result.stdout.split('\n')[0]
+                if 'version' in first_line.lower():
+                    ffmpeg_version = first_line.split('version')[1].split()[0]
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        
+        # Check Python version
+        python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        
+        # Get cookie configuration
+        cookie_config = get_cookie_config()
+        
+        return jsonify({
+            'status': 'ok',
+            'system_info': {
+                'python_version': python_version,
+                'ytdlp_version': ytdlp_version,
+                'ffmpeg_available': ffmpeg_available,
+                'ffmpeg_version': ffmpeg_version,
+                'server_type': 'Gunicorn Production Server' if 'gunicorn' in os.environ.get('SERVER_SOFTWARE', '').lower() else 'Flask Development Server',
+                'environment': os.getenv('FLASK_ENV', 'production')
+            },
+            'cookie_status': {
+                'has_cookies': cookie_config['has_cookies'],
+                'strategies': cookie_config['fallback_strategies'],
+                'cookie_file_configured': bool(os.getenv('YOUTUBE_COOKIES_FILE')),
+                'browser_configured': bool(os.getenv('YOUTUBE_COOKIES_BROWSER')),
+                'raw_cookies_configured': bool(os.getenv('YOUTUBE_COOKIES_RAW'))
+            },
+            'recommendations': {
+                'ytdlp_update_available': ytdlp_version < '2025.1.20',  # Check if version is older
+                'ffmpeg_recommended': not ffmpeg_available,
+                'cookies_recommended': not cookie_config['has_cookies']
+            }
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'error': f'Failed to get system status: {str(e)}'
+        }), 500
 def get_cookie_status():
     """Get detailed cookie configuration status and instructions"""
     cookie_config = get_cookie_config()
@@ -568,7 +624,24 @@ def get_video_info():
     
     except Exception as e:
         error_msg = str(e)
-        if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
+        
+        # Handle specific YouTube extraction errors
+        if 'Failed to extract any player response' in error_msg:
+            return jsonify({
+                'error': 'YouTube player extraction failed',
+                'type': 'extraction_failure',
+                'message': 'This video may have restrictions, be region-blocked, or YouTube has updated their API.',
+                'suggestions': [
+                    'Try a different video URL',
+                    'Check if the video is available in your region',
+                    'Video might be age-restricted or private',
+                    'yt-dlp version may need updating'
+                ],
+                'technical_details': error_msg,
+                'retry_recommended': True,
+                'retry_after': 60
+            }), 503
+        elif 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
             cookie_config = get_cookie_config()
             
             # Provide specific guidance based on cookie configuration
@@ -605,8 +678,33 @@ def get_video_info():
                 'guidance': guidance,
                 'cookie_status': cookie_config
             }), 429
+        elif 'Video unavailable' in error_msg or 'Private video' in error_msg:
+            return jsonify({
+                'error': 'Video not accessible',
+                'type': 'video_unavailable',
+                'message': 'This video is private, deleted, or unavailable.',
+                'suggestions': [
+                    'Check if the URL is correct',
+                    'Video might be private or deleted',
+                    'Try a different video'
+                ]
+            }), 404
+        elif 'Age-restricted' in error_msg:
+            return jsonify({
+                'error': 'Age-restricted content',
+                'type': 'age_restricted',
+                'message': 'This video requires age verification. Cookie authentication may be needed.',
+                'suggestions': [
+                    'Use cookies from a logged-in YouTube account',
+                    'Account must have age verification completed'
+                ]
+            }), 403
         else:
-            return jsonify({'error': f'Failed to extract video info: {error_msg}'}), 500
+            return jsonify({
+                'error': f'Failed to extract video info: {error_msg}',
+                'type': 'unknown_error',
+                'technical_details': error_msg
+            }), 500
 
 @app.route('/api/download-direct', methods=['POST'])
 def start_direct_download():
@@ -712,7 +810,21 @@ def start_direct_download():
     
     except Exception as e:
         error_msg = str(e)
-        if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
+        
+        # Handle specific YouTube extraction errors
+        if 'Failed to extract any player response' in error_msg:
+            return jsonify({
+                'error': 'YouTube player extraction failed',
+                'type': 'extraction_failure',
+                'message': 'Unable to process this video. It may be restricted or YouTube has updated their API.',
+                'suggestions': [
+                    'Try a different video URL',
+                    'Check if video is publicly available',
+                    'Ensure yt-dlp is up to date'
+                ],
+                'retry_after': 60
+            }), 503
+        elif 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
             cookie_config = get_cookie_config()
             
             return jsonify({
@@ -726,7 +838,11 @@ def start_direct_download():
                 }
             }), 429
         else:
-            return jsonify({'error': f'Failed to prepare download: {error_msg}'}), 500
+            return jsonify({
+                'error': f'Failed to prepare download: {error_msg}',
+                'type': 'unknown_error',
+                'technical_details': error_msg
+            }), 500
 
 @app.route('/api/download-stream/<download_id>')
 def stream_download(download_id):

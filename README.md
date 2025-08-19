@@ -85,6 +85,7 @@ Frontend will run at: http://localhost:3000
 ## API Endpoints
 
 - `GET /api/health` - Health check with cookie configuration status
+- `GET /api/system-status` - System diagnostics including yt-dlp version
 - `GET /api/cookie-status` - Detailed cookie configuration and instructions
 - `GET /api/test-video-extraction` - Test YouTube access with current configuration
 - `POST /api/video-info` - Get video information
@@ -227,6 +228,44 @@ python test-cookies.py --help
 - Use cookies from the same region as your server when possible
 
 ### Other Common Issues
+
+#### YouTube Player Extraction Failed
+
+**Error**: `Failed to extract any player response; please report this issue on https://github.com/yt-dlp/yt-dlp/issues`
+
+This error indicates yt-dlp cannot extract video information, usually due to:
+
+**Solutions:**
+
+1. **Update yt-dlp to the latest version**:
+
+   ```bash
+   # Local development
+   cd backend
+   venv\Scripts\activate
+   pip install --upgrade yt-dlp
+
+   # For Railway deployment - update requirements.txt
+   yt-dlp>=2025.1.25
+   ```
+
+2. **Check video accessibility**:
+
+   - Try the video URL in a regular browser
+   - Video might be region-blocked, private, or deleted
+   - Age-restricted videos may need cookie authentication
+
+3. **Test with different videos**:
+
+   - Some videos have special restrictions
+   - Try a popular, unrestricted video first
+
+4. **Check system status**:
+   - Visit `/api/system-status` to see yt-dlp version and recommendations
+   - Local: http://localhost:5000/api/system-status
+   - Production: https://your-app.railway.app/api/system-status
+
+#### Other Technical Issues
 
 1. **Import errors in frontend**
 
