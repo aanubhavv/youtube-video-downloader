@@ -28,6 +28,9 @@ Before you start, make sure you have:
    - `PORT` = `5000` (Railway will override this automatically)
    - `FRONTEND_URL` = `https://your-app.vercel.app` (you'll update this after Vercel deployment)
    - `FLASK_ENV` = `production`
+   - `YT_DLP_COOKIES_FROM_BROWSER` = `chrome` (or `firefox`, `edge` - **IMPORTANT for avoiding bot detection**)
+
+**🚨 IMPORTANT:** The `YT_DLP_COOKIES_FROM_BROWSER` variable is crucial for production to avoid YouTube's "Sign in to confirm you're not a bot" error. See `COOKIES_SETUP.md` for detailed configuration.
 
 ### 1.3 Get Your Railway URL
 

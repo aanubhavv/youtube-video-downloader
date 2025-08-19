@@ -10,6 +10,7 @@ A full-stack web application for downloading YouTube videos, built with Next.js 
 - 🎨 Modern, responsive UI with dark mode support
 - 🐍 Python virtual environment for isolated backend dependencies
 - ⚡ Fast development with Turbopack
+- 🍪 Cookie authentication to bypass YouTube bot detection
 
 ## Architecture
 
@@ -45,6 +46,17 @@ python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
 ```
+
+### 4. Cookie Authentication (Production Required)
+
+For production deployments, configure cookie authentication to avoid YouTube bot detection:
+
+```bash
+# Set environment variable for browser cookie extraction
+export YT_DLP_COOKIES_FROM_BROWSER=chrome  # or firefox, edge, safari
+```
+
+See `COOKIES_SETUP.md` for detailed cookie configuration instructions.
 
 ## Running the Application
 
@@ -130,24 +142,44 @@ webapp/
 
 ### Common Issues
 
-1. **Import errors in frontend**
+1. **"Sign in to confirm you're not a bot" error**
+
+   - **Production only**: Configure cookie authentication
+   - Set `YT_DLP_COOKIES_FROM_BROWSER=chrome` environment variable
+   - See `COOKIES_SETUP.md` for detailed instructions
+   - Test with `/api/cookie-status` endpoint
+
+2. **Import errors in frontend**
 
    - Restart VS Code or development server
    - Check tsconfig.json path mappings
 
-2. **Python packages not found**
+3. **Python packages not found**
 
    - Ensure virtual environment is activated
    - Run `pip install -r requirements.txt`
 
-3. **CORS errors**
+4. **CORS errors**
 
    - Ensure backend is running on port 5000
    - Flask-CORS is properly configured
 
-4. **FFmpeg not found warning**
+5. **FFmpeg not found warning**
    - Install FFmpeg to enable video/audio merging
-   - Without FFmpeg, files download separately
+
+### Testing Cookie Configuration
+
+Check if cookies are properly configured:
+
+```bash
+# Test cookie status
+curl http://localhost:5000/api/cookie-status
+
+# Test video extraction
+curl http://localhost:5000/api/test-video-extraction
+```
+
+- Without FFmpeg, files download separately
 
 ## License
 

@@ -24,6 +24,9 @@ COPY gunicorn.conf.py .
 # Create downloads directory
 RUN mkdir -p downloads
 
+# Set environment variable for production cookies
+ENV YT_DLP_COOKIES_FILE=/app/cookies.txt
+
 # Expose port
 EXPOSE 5000
 
