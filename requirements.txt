@@ -1,5 +1,5 @@
 # Python backend requirements for Railway deployment
-yt-dlp>=2025.1.25
+yt-dlp>=2025.8.20
 Flask==3.1.0
 Flask-CORS==5.0.0
 Werkzeug==3.1.3
