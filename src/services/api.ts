@@ -101,41 +101,12 @@ export const api = {
     if (!response.ok) {
       const error = await response.json();
       
-      // Handle specific error types with user-friendly messages
-      if (error.type === 'extraction_failure') {
-        throw new Error(`${error.message} Suggestions: ${error.suggestions?.join(', ')}`);
-      }
-      
-      // Handle bot detection specifically
-      if (response.status === 429 && error.type === 'bot_detection') {
-        const guidance = error.guidance;
-        let message = 'YouTube bot detection triggered. ';
-        
-        if (!error.cookie_status?.has_cookies) {
-          message += 'Cookie authentication is required. Please check the deployment guide for cookie setup instructions.';
-        } else {
-          message += 'Your cookies may be expired. Please refresh them and redeploy.';
-        }
-        
-        throw new Error(message);
-      }
-      
-      // Handle video unavailable
-      if (error.type === 'video_unavailable') {
-        throw new Error(`${error.message} ${error.suggestions?.join(', ')}`);
-      }
-      
-      // Handle age-restricted content
-      if (error.type === 'age_restricted') {
-        throw new Error(`${error.message} ${error.suggestions?.join(', ')}`);
-      }
-      
-      // Handle general rate limiting
+      // Handle rate limiting specifically
       if (response.status === 429) {
         throw new Error(`YouTube is temporarily blocking requests. Please wait ${Math.ceil((error.retry_after || 300) / 60)} minutes and try again.`);
       }
       
-      throw new Error(error.error || error.message || 'Failed to fetch video info');
+      throw new Error(error.error || 'Failed to fetch video info');
     }
 
     return await response.json();
@@ -153,22 +124,12 @@ export const api = {
     if (!response.ok) {
       const error = await response.json();
       
-      // Handle specific error types
-      if (error.type === 'extraction_failure') {
-        throw new Error(`${error.message} Please try a different video.`);
-      }
-      
-      // Handle bot detection specifically
-      if (response.status === 429 && error.type === 'bot_detection') {
-        throw new Error('YouTube bot detection triggered. Please check cookie configuration in your deployment settings.');
-      }
-      
-      // Handle general rate limiting
+      // Handle rate limiting specifically
       if (response.status === 429) {
         throw new Error(`YouTube is temporarily blocking requests. Please wait ${Math.ceil((error.retry_after || 300) / 60)} minutes and try again.`);
       }
       
-      throw new Error(error.error || error.message || 'Failed to start download');
+      throw new Error(error.error || 'Failed to start download');
     }
 
     return await response.json();
@@ -186,22 +147,12 @@ export const api = {
     if (!response.ok) {
       const error = await response.json();
       
-      // Handle specific error types
-      if (error.type === 'extraction_failure') {
-        throw new Error(`${error.message} Please try a different video.`);
-      }
-      
-      // Handle bot detection specifically
-      if (response.status === 429 && error.type === 'bot_detection') {
-        throw new Error('YouTube bot detection triggered. Please check cookie configuration in your deployment settings.');
-      }
-      
-      // Handle general rate limiting
+      // Handle rate limiting specifically
       if (response.status === 429) {
         throw new Error(`YouTube is temporarily blocking requests. Please wait ${Math.ceil((error.retry_after || 300) / 60)} minutes and try again.`);
       }
       
-      throw new Error(error.error || error.message || 'Failed to start download');
+      throw new Error(error.error || 'Failed to start download');
     }
 
     return await response.json();

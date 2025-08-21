@@ -6,8 +6,6 @@ import tempfile
 import threading
 from datetime import datetime
 import uuid
-import subprocess
-import sys
 
 app = Flask(__name__)
 
@@ -24,120 +22,41 @@ CORS(app, origins=allowed_origins,
 # Store download status
 download_status = {}
 
-def get_cookie_config():
-    """
-    Get cookie configuration from environment variables
-    
-    Returns:
-        dict: Cookie configuration with fallback strategies
-    """
-    cookie_config = {
-        'has_cookies': False,
-        'cookie_file': None,
-        'browser_cookies': None,
-        'fallback_strategies': []
-    }
-    
-    # Check for cookie file path (highest priority)
-    cookie_file = os.getenv('YOUTUBE_COOKIES_FILE')
-    if cookie_file and os.path.exists(cookie_file):
-        cookie_config['has_cookies'] = True
-        cookie_config['cookie_file'] = cookie_file
-        cookie_config['fallback_strategies'].append('cookie_file')
-    
-    # Check for browser cookie extraction (second priority)
-    browser_name = os.getenv('YOUTUBE_COOKIES_BROWSER', '').lower()
-    if browser_name in ['chrome', 'firefox', 'edge', 'safari', 'chromium']:
-        cookie_config['browser_cookies'] = browser_name
-        cookie_config['fallback_strategies'].append('browser_cookies')
-    
-    # Check for raw cookies in environment (third priority)
-    raw_cookies = os.getenv('YOUTUBE_COOKIES_RAW')
-    if raw_cookies:
-        # Save raw cookies to temporary file
-        temp_cookie_file = os.path.join(tempfile.gettempdir(), 'youtube_cookies.txt')
-        try:
-            with open(temp_cookie_file, 'w', encoding='utf-8') as f:
-                f.write(raw_cookies)
-            cookie_config['has_cookies'] = True
-            cookie_config['cookie_file'] = temp_cookie_file
-            cookie_config['fallback_strategies'].append('raw_cookies')
-        except Exception as e:
-            print(f"Warning: Failed to save raw cookies: {e}")
-    
-    # Always add enhanced headers as fallback
-    cookie_config['fallback_strategies'].append('enhanced_headers')
-    
-    return cookie_config
-
 def get_enhanced_ydl_opts(base_opts=None):
     """
-    Get enhanced yt-dlp options with cookie support to bypass bot detection
+    Get enhanced yt-dlp options to minimize bot detection
     
     Args:
         base_opts (dict): Optional base options to merge with enhanced options
         
     Returns:
-        dict: Enhanced yt-dlp options with cookie authentication
+        dict: Enhanced yt-dlp options
     """
-    # Get cookie configuration
-    cookie_config = get_cookie_config()
-    
     enhanced_opts = {
         'quiet': True,
         'no_warnings': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'referer': 'https://www.youtube.com/',
-        'sleep_interval': 3,  # Increased sleep to be more human-like
-        'max_sleep_interval': 15,
-        'extractor_retries': 8,  # Increased retries
-        'fragment_retries': 8,
-        'socket_timeout': 60,  # Increased timeout
+        'sleep_interval': 2,
+        'max_sleep_interval': 10,
+        'extractor_retries': 5,
+        'fragment_retries': 5,
+        'socket_timeout': 30,
         'http_chunk_size': 10485760,  # 10MB chunks
         'retry_sleep_functions': {
-            'http': lambda n: min(2 ** n + 1, 120),  # More conservative backoff
-            'fragment': lambda n: min(2 ** n + 1, 120),
-            'extractor': lambda n: min(2 ** n + 2, 300)  # Longer backoff for extraction
+            'http': lambda n: min(4 ** n, 100),
+            'fragment': lambda n: min(4 ** n, 100),
+            'extractor': lambda n: min(4 ** n, 100)
         },
         'http_headers': {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Cache-Control': 'max-age=0',
-            'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'Upgrade-Insecure-Requests': '1',
-            'DNT': '1',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-us,en;q=0.5',
+            'Accept-Encoding': 'gzip,deflate',
+            'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
+            'Keep-Alive': '300',
+            'Connection': 'keep-alive',
         }
     }
-    
-    # Add cookie configuration if available
-    if cookie_config['has_cookies']:
-        if cookie_config['cookie_file']:
-            enhanced_opts['cookiefile'] = cookie_config['cookie_file']
-            print(f"Using cookie file: {cookie_config['cookie_file']}")
-        elif cookie_config['browser_cookies']:
-            enhanced_opts['cookiesfrombrowser'] = (cookie_config['browser_cookies'],)
-            print(f"Using cookies from browser: {cookie_config['browser_cookies']}")
-    
-    # Add additional anti-bot measures
-    enhanced_opts.update({
-        'extract_flat': False,
-        'ignoreerrors': False,
-        'no_check_certificate': False,  # Keep certificate validation
-        'prefer_insecure': False,
-        'geo_bypass': True,
-        'geo_bypass_country': 'US',  # Try US geo-location
-        'age_limit': None,
-        'skip_unavailable_fragments': True,
-        'keep_fragments': False,
-        'abort_on_unavailable_fragment': False,
-    })
     
     if base_opts:
         enhanced_opts.update(base_opts)
@@ -381,28 +300,17 @@ def download_video_async(task_id, url, output_folder, quality='auto'):
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Health check endpoint with cookie configuration status"""
-    cookie_config = get_cookie_config()
-    
+    """Health check endpoint"""
     return jsonify({
         'status': 'ok', 
         'message': 'YouTube Downloader API is running',
         'server': 'Gunicorn Production Server' if 'gunicorn' in os.environ.get('SERVER_SOFTWARE', '').lower() else 'Flask Development Server',
         'environment': os.getenv('FLASK_ENV', 'production'),
-        'version': '1.2.0',  # Updated version with cookie support
+        'version': '1.1.0',  # Updated version with enhanced anti-bot measures
         'features': {
             'enhanced_anti_bot': True,
             'rate_limit_handling': True,
-            'browser_headers': True,
-            'cookie_support': True,
-            'browser_cookie_extraction': True
-        },
-        'cookie_status': {
-            'has_cookies': cookie_config['has_cookies'],
-            'strategies': cookie_config['fallback_strategies'],
-            'cookie_file_configured': bool(os.getenv('YOUTUBE_COOKIES_FILE')),
-            'browser_configured': bool(os.getenv('YOUTUBE_COOKIES_BROWSER')),
-            'raw_cookies_configured': bool(os.getenv('YOUTUBE_COOKIES_RAW'))
+            'browser_headers': True
         }
     })
 
@@ -427,8 +335,7 @@ def test_video_extraction():
                     'user_agent': ydl_opts.get('user_agent', 'N/A'),
                     'sleep_interval': ydl_opts.get('sleep_interval', 0),
                     'extractor_retries': ydl_opts.get('extractor_retries', 0),
-                    'has_custom_headers': bool(ydl_opts.get('http_headers')),
-                    'has_cookies': bool(ydl_opts.get('cookiefile') or ydl_opts.get('cookiesfrombrowser'))
+                    'has_custom_headers': bool(ydl_opts.get('http_headers'))
                 }
             })
     except Exception as e:
@@ -437,9 +344,8 @@ def test_video_extraction():
             return jsonify({
                 'success': False,
                 'error': 'Bot detection triggered',
-                'message': 'YouTube is blocking requests. Cookie authentication recommended.',
-                'retry_recommended': True,
-                'cookie_status': get_cookie_config()
+                'message': 'YouTube is blocking requests. This confirms our detection logic works.',
+                'retry_recommended': True
             }), 429
         else:
             return jsonify({
@@ -447,129 +353,6 @@ def test_video_extraction():
                 'error': 'Extraction failed',
                 'message': error_msg
             }), 500
-
-@app.route('/api/system-status', methods=['GET'])
-def get_system_status():
-    """Get system status including yt-dlp version and other diagnostics"""
-    try:
-        # Get yt-dlp version
-        ytdlp_version = yt_dlp.version.__version__
-        
-        # Check if ffmpeg is available
-        ffmpeg_available = False
-        ffmpeg_version = 'Not available'
-        try:
-            result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                ffmpeg_available = True
-                # Extract version from first line
-                first_line = result.stdout.split('\n')[0]
-                if 'version' in first_line.lower():
-                    ffmpeg_version = first_line.split('version')[1].split()[0]
-        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-        
-        # Check Python version
-        python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-        
-        # Get cookie configuration
-        cookie_config = get_cookie_config()
-        
-        return jsonify({
-            'status': 'ok',
-            'system_info': {
-                'python_version': python_version,
-                'ytdlp_version': ytdlp_version,
-                'ffmpeg_available': ffmpeg_available,
-                'ffmpeg_version': ffmpeg_version,
-                'server_type': 'Gunicorn Production Server' if 'gunicorn' in os.environ.get('SERVER_SOFTWARE', '').lower() else 'Flask Development Server',
-                'environment': os.getenv('FLASK_ENV', 'production')
-            },
-            'cookie_status': {
-                'has_cookies': cookie_config['has_cookies'],
-                'strategies': cookie_config['fallback_strategies'],
-                'cookie_file_configured': bool(os.getenv('YOUTUBE_COOKIES_FILE')),
-                'browser_configured': bool(os.getenv('YOUTUBE_COOKIES_BROWSER')),
-                'raw_cookies_configured': bool(os.getenv('YOUTUBE_COOKIES_RAW'))
-            },
-            'recommendations': {
-                'ytdlp_update_available': ytdlp_version < '2025.1.20',  # Check if version is older
-                'ffmpeg_recommended': not ffmpeg_available,
-                'cookies_recommended': not cookie_config['has_cookies']
-            }
-        })
-    except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'error': f'Failed to get system status: {str(e)}'
-        }), 500
-def get_cookie_status():
-    """Get detailed cookie configuration status and instructions"""
-    cookie_config = get_cookie_config()
-    
-    # Instructions for different methods
-    instructions = {
-        'browser_export': {
-            'title': 'Export Cookies from Browser (Recommended)',
-            'steps': [
-                '1. Install a browser extension like "Get cookies.txt LOCALLY"',
-                '2. Visit YouTube and log in to your account',
-                '3. Use the extension to export cookies for youtube.com',
-                '4. Copy the cookie content to YOUTUBE_COOKIES_RAW environment variable',
-                '5. Redeploy your Railway app'
-            ],
-            'extensions': {
-                'chrome': 'https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc',
-                'firefox': 'https://addons.mozilla.org/en-US/firefox/addon/cookies-txt/'
-            }
-        },
-        'browser_auto': {
-            'title': 'Automatic Browser Cookie Extraction',
-            'steps': [
-                '1. Set YOUTUBE_COOKIES_BROWSER=chrome (or firefox, edge, safari)',
-                '2. This works if the browser and cookies are on the same machine',
-                '3. Not recommended for cloud deployments like Railway'
-            ]
-        },
-        'manual': {
-            'title': 'Manual Cookie Format',
-            'example': '''# Netscape HTTP Cookie File
-# This file contains the cookies for youtube.com
-.youtube.com	TRUE	/	FALSE	1234567890	cookie_name	cookie_value
-.youtube.com	TRUE	/	TRUE	1234567890	session_token	abc123def456'''
-        }
-    }
-    
-    return jsonify({
-        'cookie_config': cookie_config,
-        'environment_variables': {
-            'YOUTUBE_COOKIES_RAW': {
-                'description': 'Raw cookie content in Netscape format',
-                'priority': 'highest',
-                'current_value': 'configured' if os.getenv('YOUTUBE_COOKIES_RAW') else 'not_set'
-            },
-            'YOUTUBE_COOKIES_FILE': {
-                'description': 'Path to cookie file (for local deployments)',
-                'priority': 'high',
-                'current_value': 'configured' if os.getenv('YOUTUBE_COOKIES_FILE') else 'not_set'
-            },
-            'YOUTUBE_COOKIES_BROWSER': {
-                'description': 'Browser name for auto-extraction (chrome, firefox, edge, safari)',
-                'priority': 'medium',
-                'current_value': os.getenv('YOUTUBE_COOKIES_BROWSER', 'not_set')
-            }
-        },
-        'instructions': instructions,
-        'railway_deployment': {
-            'recommended_method': 'YOUTUBE_COOKIES_RAW',
-            'steps': [
-                '1. Go to your Railway project dashboard',
-                '2. Navigate to Variables tab',
-                '3. Add YOUTUBE_COOKIES_RAW variable with your exported cookies',
-                '4. Redeploy the service'
-            ]
-        }
-    })
 
 @app.route('/api/video-info', methods=['POST'])
 def get_video_info():
@@ -624,87 +407,14 @@ def get_video_info():
     
     except Exception as e:
         error_msg = str(e)
-        
-        # Handle specific YouTube extraction errors
-        if 'Failed to extract any player response' in error_msg:
+        if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
             return jsonify({
-                'error': 'YouTube player extraction failed',
-                'type': 'extraction_failure',
-                'message': 'This video may have restrictions, be region-blocked, or YouTube has updated their API.',
-                'suggestions': [
-                    'Try a different video URL',
-                    'Check if the video is available in your region',
-                    'Video might be age-restricted or private',
-                    'yt-dlp version may need updating'
-                ],
-                'technical_details': error_msg,
-                'retry_recommended': True,
-                'retry_after': 60
-            }), 503
-        elif 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
-            cookie_config = get_cookie_config()
-            
-            # Provide specific guidance based on cookie configuration
-            if not cookie_config['has_cookies']:
-                guidance = {
-                    'message': 'YouTube bot detection triggered. Cookie authentication required.',
-                    'solution': 'Add YouTube cookies to bypass bot detection.',
-                    'instructions': [
-                        '1. Export cookies from your browser (Chrome/Firefox recommended)',
-                        '2. Set YOUTUBE_COOKIES_RAW environment variable with cookie content',
-                        '3. Or set YOUTUBE_COOKIES_BROWSER=chrome to auto-extract',
-                        '4. Redeploy your Railway app'
-                    ],
-                    'environment_vars': {
-                        'YOUTUBE_COOKIES_RAW': 'Paste your exported cookies here',
-                        'YOUTUBE_COOKIES_BROWSER': 'chrome, firefox, edge, or safari'
-                    }
-                }
-            else:
-                guidance = {
-                    'message': 'YouTube bot detection triggered despite cookie configuration.',
-                    'solution': 'Cookies may be expired or invalid.',
-                    'instructions': [
-                        '1. Export fresh cookies from a logged-in YouTube session',
-                        '2. Update your environment variables',
-                        '3. Ensure cookies are from the same region as your server'
-                    ]
-                }
-            
-            return jsonify({
-                'error': 'YouTube bot detection',
-                'retry_after': 300,
-                'type': 'bot_detection',
-                'guidance': guidance,
-                'cookie_status': cookie_config
+                'error': 'YouTube is temporarily blocking requests. Please try again in a few minutes.',
+                'retry_after': 300,  # Suggest retry after 5 minutes
+                'type': 'rate_limit'
             }), 429
-        elif 'Video unavailable' in error_msg or 'Private video' in error_msg:
-            return jsonify({
-                'error': 'Video not accessible',
-                'type': 'video_unavailable',
-                'message': 'This video is private, deleted, or unavailable.',
-                'suggestions': [
-                    'Check if the URL is correct',
-                    'Video might be private or deleted',
-                    'Try a different video'
-                ]
-            }), 404
-        elif 'Age-restricted' in error_msg:
-            return jsonify({
-                'error': 'Age-restricted content',
-                'type': 'age_restricted',
-                'message': 'This video requires age verification. Cookie authentication may be needed.',
-                'suggestions': [
-                    'Use cookies from a logged-in YouTube account',
-                    'Account must have age verification completed'
-                ]
-            }), 403
         else:
-            return jsonify({
-                'error': f'Failed to extract video info: {error_msg}',
-                'type': 'unknown_error',
-                'technical_details': error_msg
-            }), 500
+            return jsonify({'error': f'Failed to extract video info: {error_msg}'}), 500
 
 @app.route('/api/download-direct', methods=['POST'])
 def start_direct_download():
@@ -810,39 +520,14 @@ def start_direct_download():
     
     except Exception as e:
         error_msg = str(e)
-        
-        # Handle specific YouTube extraction errors
-        if 'Failed to extract any player response' in error_msg:
+        if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
             return jsonify({
-                'error': 'YouTube player extraction failed',
-                'type': 'extraction_failure',
-                'message': 'Unable to process this video. It may be restricted or YouTube has updated their API.',
-                'suggestions': [
-                    'Try a different video URL',
-                    'Check if video is publicly available',
-                    'Ensure yt-dlp is up to date'
-                ],
-                'retry_after': 60
-            }), 503
-        elif 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
-            cookie_config = get_cookie_config()
-            
-            return jsonify({
-                'error': 'YouTube bot detection triggered',
-                'retry_after': 300,
-                'type': 'bot_detection',
-                'guidance': {
-                    'message': 'Cookie authentication required for downloads',
-                    'cookie_configured': cookie_config['has_cookies'],
-                    'strategies': cookie_config['fallback_strategies']
-                }
+                'error': 'YouTube is temporarily blocking requests. Please try again in a few minutes.',
+                'retry_after': 300,  # Suggest retry after 5 minutes
+                'type': 'rate_limit'
             }), 429
         else:
-            return jsonify({
-                'error': f'Failed to prepare download: {error_msg}',
-                'type': 'unknown_error',
-                'technical_details': error_msg
-            }), 500
+            return jsonify({'error': f'Failed to prepare download: {error_msg}'}), 500
 
 @app.route('/api/download-stream/<download_id>')
 def stream_download(download_id):
