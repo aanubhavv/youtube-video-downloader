@@ -5,6 +5,26 @@ import VideoInfoCard from "@/components/VideoInfoCard";
 import DownloadProgress from "@/components/DownloadProgress";
 import api from "@/services/api";
 
+interface VideoFormat {
+  format_id: string;
+  width?: number;
+  height?: number;
+  fps?: number;
+  vcodec?: string;
+  filesize?: number;
+  tbr?: number;
+}
+
+interface AudioFormat {
+  format_id: string;
+  acodec?: string;
+  abr?: number;
+  filesize?: number;
+  tbr?: number;
+  language?: string;
+  language_preference?: number;
+}
+
 interface VideoInfo {
   title: string;
   duration: number;
@@ -14,22 +34,8 @@ interface VideoInfo {
   view_count: number;
   upload_date: string;
   formats: {
-    video_formats: Array<{
-      format_id: string;
-      width?: number;
-      height?: number;
-      fps?: number;
-      vcodec?: string;
-      filesize?: number;
-      tbr?: number;
-    }>;
-    audio_formats: Array<{
-      format_id: string;
-      acodec?: string;
-      abr?: number;
-      filesize?: number;
-      tbr?: number;
-    }>;
+    video_formats: VideoFormat[];
+    audio_formats: AudioFormat[];
     recommended_video: string;
     recommended_audio: string;
   };
@@ -40,6 +46,7 @@ interface DownloadTask {
   download_id?: string;
   status: string;
   message: string;
+  file_extension?: string;
 }
 
 interface DownloadedFile {
@@ -53,7 +60,10 @@ export default function Home() {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
-  const [quality, setQuality] = useState("auto");
+  const [selectedVideoFormat, setSelectedVideoFormat] =
+    useState<VideoFormat | null>(null);
+  const [selectedAudioFormat, setSelectedAudioFormat] =
+    useState<AudioFormat | null>(null);
   const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([]);
   const [error, setError] = useState("");
   const [downloadedFiles, setDownloadedFiles] = useState<DownloadedFile[]>([]);
@@ -88,6 +98,12 @@ export default function Home() {
     setLoading(true);
 
     try {
+      // Determine quality parameter based on selected formats
+      let quality = "auto";
+      if (selectedVideoFormat && selectedVideoFormat.height) {
+        quality = `best[height<=${selectedVideoFormat.height}]`;
+      }
+
       // Start direct download using API service
       const data = await api.startDirectDownload(url, quality);
 
@@ -144,6 +160,92 @@ export default function Home() {
     }
   };
 
+  const startCustomFormatDownload = async () => {
+    if (!url.trim()) {
+      setError("Please enter a YouTube URL");
+      return;
+    }
+
+    if (!selectedVideoFormat && !selectedAudioFormat) {
+      setError("Please select at least one format (video or audio)");
+      return;
+    }
+
+    setError("");
+    setLoading(true);
+
+    try {
+      // Start custom format download using API service
+      const data = await api.startCustomFormatDownload(
+        url,
+        selectedVideoFormat?.format_id,
+        selectedAudioFormat?.format_id
+      );
+
+      // Create a temporary download task for status
+      const directTask: DownloadTask = {
+        task_id: data.download_id,
+        status: "preparing",
+        message: `Preparing custom download: ${data.title}`,
+      };
+
+      setDownloadTasks((prev) => [directTask, ...prev]);
+
+      // Trigger direct download
+      const link = document.createElement("a");
+      link.href = api.getDirectDownloadUrl(data.download_id!);
+      const extension =
+        data.file_extension ||
+        (selectedAudioFormat && !selectedVideoFormat ? ".mp3" : ".mp4");
+      link.download = `${data.safe_title}${extension}`;
+      link.style.display = "none";
+      document.body.appendChild(link);
+
+      // Update task status
+      setDownloadTasks((prev) =>
+        prev.map((task) =>
+          task.task_id === data.download_id
+            ? {
+                ...task,
+                status: "downloading",
+                message: "Downloading to your device...",
+              }
+            : task
+        )
+      );
+
+      link.click();
+      document.body.removeChild(link);
+
+      // Update to completed after a delay (since we can't track actual progress)
+      setTimeout(() => {
+        setDownloadTasks((prev) =>
+          prev.map((task) =>
+            task.task_id === data.download_id
+              ? {
+                  ...task,
+                  status: "completed",
+                  message: `Custom download started: ${data.title}`,
+                }
+              : task
+          )
+        );
+      }, 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An error occurred");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFormatSelection = (
+    videoFormat: VideoFormat | null,
+    audioFormat: AudioFormat | null
+  ) => {
+    setSelectedVideoFormat(videoFormat);
+    setSelectedAudioFormat(audioFormat);
+  };
+
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return "0 B";
     const k = 1024;
@@ -153,7 +255,11 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
+    <div
+      className={`min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 ${
+        loading ? "cursor-wait" : ""
+      }`}
+    >
       <div className="container mx-auto px-4 py-8">
         <div className="max-w-4xl mx-auto">
           {/* Header */}
@@ -192,27 +298,6 @@ export default function Home() {
                 />
               </div>
 
-              <div>
-                <label
-                  htmlFor="quality"
-                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-                >
-                  Quality
-                </label>
-                <select
-                  id="quality"
-                  value={quality}
-                  onChange={(e) => setQuality(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                >
-                  <option value="auto">Best</option>
-                  <option value="best[height<=1080]">1080p</option>
-                  <option value="best[height<=720]">720p</option>
-                  <option value="best[height<=480]">480p or lower</option>
-                  <option value="bestaudio">Audio Only</option>
-                </select>
-              </div>
-
               <div className="flex gap-3">
                 <button
                   onClick={fetchVideoInfo}
@@ -220,7 +305,9 @@ export default function Home() {
                   className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-semibold py-2 px-4 rounded-md transition duration-200 cursor-pointer"
                   style={{ cursor: "pointer" }}
                 >
-                  {loading ? "Loading..." : "Get Video Info"}
+                  {loading
+                    ? "Loading..."
+                    : "📋 Get Video Info & Select Formats"}
                 </button>
                 <button
                   onClick={startDirectDownload}
@@ -228,9 +315,42 @@ export default function Home() {
                   className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white font-semibold py-2 px-4 rounded-md transition duration-200 cursor-pointer"
                   style={{ cursor: "pointer" }}
                 >
-                  {loading ? "Preparing..." : "⬇️ Download to Device"}
+                  {loading
+                    ? "Preparing..."
+                    : "⚡ Quick Download (Best Quality)"}
                 </button>
               </div>
+
+              {/* Custom Download Button - Only show if formats are selected */}
+              {videoInfo && (selectedVideoFormat || selectedAudioFormat) && (
+                <div className="pt-4 border-t border-gray-200 dark:border-gray-600">
+                  <button
+                    onClick={startCustomFormatDownload}
+                    disabled={loading}
+                    className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400 text-white font-semibold py-3 px-4 rounded-md transition duration-200 cursor-pointer flex items-center justify-center space-x-2"
+                    style={{ cursor: "pointer" }}
+                  >
+                    <span>🎯 Download with Selected Formats</span>
+                  </button>
+                  <div className="mt-2 text-center text-sm text-gray-600 dark:text-gray-400">
+                    {selectedVideoFormat &&
+                      selectedAudioFormat &&
+                      "Video + Audio"}
+                    {selectedVideoFormat &&
+                      !selectedAudioFormat &&
+                      "Video Only"}
+                    {!selectedVideoFormat &&
+                      selectedAudioFormat &&
+                      "Audio Only"}
+                    {selectedVideoFormat && ` (${selectedVideoFormat.height}p)`}
+                    {selectedAudioFormat &&
+                      ` • ${
+                        selectedAudioFormat.language?.toUpperCase() ||
+                        "Unknown language"
+                      }`}
+                  </div>
+                </div>
+              )}
             </div>
 
             {error && (
@@ -324,7 +444,14 @@ export default function Home() {
           )}
 
           {/* Video Info Card */}
-          {videoInfo && <VideoInfoCard videoInfo={videoInfo} />}
+          {videoInfo && (
+            <VideoInfoCard
+              videoInfo={videoInfo}
+              onFormatSelect={handleFormatSelection}
+              onDownload={startCustomFormatDownload}
+              disabled={loading}
+            />
+          )}
 
           {/* Download Progress */}
           {downloadTasks.length > 0 && (

@@ -56,6 +56,8 @@ interface VideoInfo {
       abr?: number;
       filesize?: number;
       tbr?: number;
+      language?: string;
+      language_preference?: number;
     }>;
     recommended_video: string;
     recommended_audio: string;
@@ -76,6 +78,7 @@ interface DownloadTask {
   download_url?: string;
   title?: string;
   safe_title?: string;
+  file_extension?: string;
 }
 
 export const api = {
@@ -107,6 +110,33 @@ export const api = {
       }
       
       throw new Error(error.error || 'Failed to fetch video info');
+    }
+
+    return await response.json();
+  },
+
+  async startCustomFormatDownload(url: string, videoFormatId?: string, audioFormatId?: string): Promise<DownloadTask> {
+    const response = await fetch(`${API_BASE_URL}/api/download-custom`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ 
+        url, 
+        video_format_id: videoFormatId,
+        audio_format_id: audioFormatId
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      
+      // Handle rate limiting specifically
+      if (response.status === 429) {
+        throw new Error(`YouTube is temporarily blocking requests. Please wait ${Math.ceil((error.retry_after || 300) / 60)} minutes and try again.`);
+      }
+      
+      throw new Error(error.error || 'Failed to start custom download');
     }
 
     return await response.json();

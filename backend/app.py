@@ -83,7 +83,48 @@ def get_best_formats(info):
         if fmt.get('vcodec') != 'none' and fmt.get('acodec') == 'none':  # Video only
             video_formats.append(fmt)
         elif fmt.get('acodec') != 'none' and fmt.get('vcodec') == 'none':  # Audio only
-            audio_formats.append(fmt)
+            # Extract language information
+            audio_format = fmt.copy()
+            
+            # Try to extract language from various fields
+            language = fmt.get('language')
+            if not language:
+                # Check format note or format description for language hints
+                format_note = fmt.get('format_note', '').lower()
+                ext = fmt.get('ext', '').lower()
+                format_id = fmt.get('format_id', '').lower()
+                
+                # Common language patterns in format descriptions
+                if 'english' in format_note or 'en' in format_id:
+                    language = 'en'
+                elif 'spanish' in format_note or 'es' in format_id:
+                    language = 'es'
+                elif 'french' in format_note or 'fr' in format_id:
+                    language = 'fr'
+                elif 'german' in format_note or 'de' in format_id:
+                    language = 'de'
+                elif 'italian' in format_note or 'it' in format_id:
+                    language = 'it'
+                elif 'portuguese' in format_note or 'pt' in format_id:
+                    language = 'pt'
+                elif 'russian' in format_note or 'ru' in format_id:
+                    language = 'ru'
+                elif 'japanese' in format_note or 'ja' in format_id:
+                    language = 'ja'
+                elif 'korean' in format_note or 'ko' in format_id:
+                    language = 'ko'
+                elif 'chinese' in format_note or 'zh' in format_id:
+                    language = 'zh'
+                elif 'hindi' in format_note or 'hi' in format_id:
+                    language = 'hi'
+                elif 'arabic' in format_note or 'ar' in format_id:
+                    language = 'ar'
+                else:
+                    # Default to English for most YouTube videos
+                    language = 'en'
+            
+            audio_format['language'] = language
+            audio_formats.append(audio_format)
     
     # Sort video formats by quality (height, then fps, then bitrate) - Fixed None handling
     video_formats.sort(key=lambda x: (
@@ -92,11 +133,13 @@ def get_best_formats(info):
         x.get('tbr') or 0
     ), reverse=True)
     
-    # Sort audio formats by quality (bitrate) - Fixed None handling
+    # Sort audio formats by quality (bitrate) within language groups
+    # Prefer English first, then by quality
     audio_formats.sort(key=lambda x: (
-        x.get('abr') or 0,
-        x.get('tbr') or 0
-    ), reverse=True)
+        0 if x.get('language') == 'en' else 1,  # English first
+        -(x.get('abr') or 0),  # Higher bitrate first
+        -(x.get('tbr') or 0)
+    ))
     
     # Select best formats
     best_video = None
@@ -119,10 +162,11 @@ def get_best_formats(info):
     format_info = {
         'video_format': best_video,
         'audio_format': best_audio,
-        'video_formats': video_formats[:10],  # Top 10 video formats
-        'audio_formats': audio_formats[:8],   # Top 8 audio formats
+        'video_formats': video_formats[:12],  # Top 12 video formats
+        'audio_formats': audio_formats[:16],   # Top 16 audio formats (more for language variety)
         'total_video_formats': len(video_formats),
-        'total_audio_formats': len(audio_formats)
+        'total_audio_formats': len(audio_formats),
+        'available_languages': list(set(fmt.get('language', 'unknown') for fmt in audio_formats))
     }
     
     return (
@@ -159,7 +203,48 @@ def get_format_for_quality(info, quality):
         if fmt.get('vcodec') != 'none' and fmt.get('acodec') == 'none':  # Video only
             video_formats.append(fmt)
         elif fmt.get('acodec') != 'none' and fmt.get('vcodec') == 'none':  # Audio only
-            audio_formats.append(fmt)
+            # Extract language information
+            audio_format = fmt.copy()
+            
+            # Try to extract language from various fields
+            language = fmt.get('language')
+            if not language:
+                # Check format note or format description for language hints
+                format_note = fmt.get('format_note', '').lower()
+                ext = fmt.get('ext', '').lower()
+                format_id = fmt.get('format_id', '').lower()
+                
+                # Common language patterns in format descriptions
+                if 'english' in format_note or 'en' in format_id:
+                    language = 'en'
+                elif 'spanish' in format_note or 'es' in format_id:
+                    language = 'es'
+                elif 'french' in format_note or 'fr' in format_id:
+                    language = 'fr'
+                elif 'german' in format_note or 'de' in format_id:
+                    language = 'de'
+                elif 'italian' in format_note or 'it' in format_id:
+                    language = 'it'
+                elif 'portuguese' in format_note or 'pt' in format_id:
+                    language = 'pt'
+                elif 'russian' in format_note or 'ru' in format_id:
+                    language = 'ru'
+                elif 'japanese' in format_note or 'ja' in format_id:
+                    language = 'ja'
+                elif 'korean' in format_note or 'ko' in format_id:
+                    language = 'ko'
+                elif 'chinese' in format_note or 'zh' in format_id:
+                    language = 'zh'
+                elif 'hindi' in format_note or 'hi' in format_id:
+                    language = 'hi'
+                elif 'arabic' in format_note or 'ar' in format_id:
+                    language = 'ar'
+                else:
+                    # Default to English for most YouTube videos
+                    language = 'en'
+            
+            audio_format['language'] = language
+            audio_formats.append(audio_format)
     
     # Sort formats by quality
     video_formats = sorted(video_formats, key=lambda x: (
@@ -169,9 +254,10 @@ def get_format_for_quality(info, quality):
     ), reverse=True)
     
     audio_formats = sorted(audio_formats, key=lambda x: (
-        x.get('abr') or 0,
-        x.get('tbr') or 0
-    ), reverse=True)
+        0 if x.get('language') == 'en' else 1,  # English first
+        -(x.get('abr') or 0),
+        -(x.get('tbr') or 0)
+    ))
     
     # Find best audio format
     best_audio = audio_formats[0] if audio_formats else None
@@ -187,7 +273,7 @@ def get_format_for_quality(info, quality):
         }
     else:
         # Extract target height from quality string (e.g., "best[height<=720]" -> 720)
-        target_height = None
+        target_height = 1080  # default fallback
         if 'height<=' in quality:
             try:
                 target_height = int(quality.split('height<=')[1].split(']')[0])
@@ -196,11 +282,12 @@ def get_format_for_quality(info, quality):
         
         # Find best video format at or below target height
         best_video = None
-        for fmt in video_formats:
-            height = fmt.get('height') or 0
-            if height <= target_height:
-                best_video = fmt
-                break
+        if video_formats and target_height:
+            for fmt in video_formats:
+                height = fmt.get('height') or 0
+                if height <= target_height:
+                    best_video = fmt
+                    break
         
         # If no format found at target height, get the lowest available
         if not best_video and video_formats:
@@ -208,7 +295,10 @@ def get_format_for_quality(info, quality):
         
         format_info = {
             'video_format': best_video,
-            'audio_format': best_audio
+            'audio_format': best_audio,
+            'video_formats': video_formats[:12],
+            'audio_formats': audio_formats[:16],
+            'available_languages': list(set(fmt.get('language', 'unknown') for fmt in audio_formats))
         }
         
         return (best_video.get('format_id') if best_video else None,
@@ -529,6 +619,124 @@ def start_direct_download():
         else:
             return jsonify({'error': f'Failed to prepare download: {error_msg}'}), 500
 
+@app.route('/api/download-custom', methods=['POST'])
+def start_custom_format_download():
+    """Start download with specific video and audio format IDs"""
+    try:
+        data = request.get_json()
+        url = data.get('url')
+        video_format_id = data.get('video_format_id')
+        audio_format_id = data.get('audio_format_id')
+        
+        if not url:
+            return jsonify({'error': 'URL is required'}), 400
+        
+        if not video_format_id and not audio_format_id:
+            return jsonify({'error': 'At least one format ID is required'}), 400
+        
+        # Create download ID first for status tracking
+        download_id = str(uuid.uuid4())
+        
+        # Initialize status tracking
+        download_status[download_id] = {
+            'status': 'extracting_info',
+            'message': 'Extracting video information...',
+            'url': url,
+            'video_format_id': video_format_id,
+            'audio_format_id': audio_format_id,
+            'direct_download': True,
+            'custom_formats': True,
+            'started_at': datetime.now().isoformat()
+        }
+
+        # Get video info first to get title
+        ydl_opts_info = get_enhanced_ydl_opts()
+        
+        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
+            info = ydl.extract_info(url, download=False)
+            title = info.get('title', 'video')
+            duration = info.get('duration', 0)
+            uploader = info.get('uploader', 'N/A')
+            
+            # Clean filename for download
+            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            if not safe_title:
+                safe_title = 'video'
+        
+        # Update status to preparing custom download
+        download_status[download_id]['status'] = 'preparing_custom_download'
+        download_status[download_id]['message'] = 'Preparing custom format download...'
+        download_status[download_id]['video_info'] = {
+            'title': title,
+            'duration': f"{duration // 60}:{duration % 60:02d}",
+            'uploader': uploader
+        }
+
+        # Create format string for yt-dlp
+        if video_format_id and audio_format_id:
+            format_string = f"{video_format_id}+{audio_format_id}"
+            selected_format_description = "Custom Video + Audio"
+            file_extension = "mp4"
+        elif video_format_id:
+            format_string = video_format_id
+            selected_format_description = "Video Only"
+            file_extension = "mp4"
+        elif audio_format_id:
+            format_string = audio_format_id
+            selected_format_description = "Audio Only"
+            file_extension = "mp3"
+        
+        # Store download info for the stream endpoint
+        download_info = {
+            'url': url,
+            'quality': 'custom',  # Add quality key for consistency
+            'format_string': format_string,
+            'safe_title': safe_title,
+            'original_title': title,
+            'selected_format_description': selected_format_description,
+            'file_extension': file_extension,
+            'video_info': {
+                'title': title,
+                'duration': f"{duration // 60}:{duration % 60:02d}",
+                'uploader': uploader
+            }
+        }
+        
+        # Use a simple in-memory store for download info
+        if not hasattr(app, 'download_cache'):
+            app.download_cache = {}
+        app.download_cache[download_id] = download_info
+        
+        # Update status entry for the frontend polling
+        download_status[download_id].update({
+            'status': 'custom_download_ready',
+            'message': f'Custom download ready: {title}',
+            'download_url': f'/api/download-stream/{download_id}',
+            'safe_title': safe_title,
+            'selected_format': format_string,
+            'format_description': selected_format_description,
+            'video_info': download_info['video_info']
+        })
+        
+        return jsonify({
+            'download_id': download_id,
+            'download_url': f'/api/download-stream/{download_id}',
+            'title': title,
+            'safe_title': safe_title,
+            'file_extension': file_extension
+        })
+    
+    except Exception as e:
+        error_msg = str(e)
+        if 'Sign in to confirm' in error_msg or 'bot' in error_msg.lower():
+            return jsonify({
+                'error': 'YouTube is temporarily blocking requests. Please try again in a few minutes.',
+                'retry_after': 300,
+                'type': 'rate_limit'
+            }), 429
+        else:
+            return jsonify({'error': f'Failed to prepare custom download: {error_msg}'}), 500
+
 @app.route('/api/download-stream/<download_id>')
 def stream_download(download_id):
     """Stream video directly to user's browser for download"""
@@ -549,7 +757,8 @@ def stream_download(download_id):
         print(f"DEBUG: Download info retrieved: {download_info}")
         
         url = download_info['url']
-        quality = download_info['quality']
+        # Handle both regular downloads (with 'quality') and custom downloads (without 'quality')
+        quality = download_info.get('quality', 'custom')
         safe_title = download_info['safe_title']
         format_string = download_info['format_string']
         format_description = download_info['selected_format_description']
