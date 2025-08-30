@@ -264,8 +264,11 @@ export default function Home() {
         <div className="max-w-4xl mx-auto">
           {/* Header */}
           <div className="text-center mb-8">
-            <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-2">
-              YouTube Downloader
+            <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-2 flex items-center justify-center gap-2">
+              <img src="/favicon.ico" alt="YTFlow" className="w-10 h-10" />
+              <span>
+                <span className="text-red-500">YT</span>Flow
+              </span>
             </h1>
             <p className="text-gray-600 dark:text-gray-300 mb-4">
               Download YouTube videos in high quality
