@@ -1,20 +1,19 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const inter = Inter({
   subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+  weight: ["300", "400", "600", "700"],
+  variable: "--font-inter",
+  display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "Youtube Video Downloader",
-  description: "Developed by aanubhavv",
+  title: "YTFlow - YouTube Video Downloader",
+  description:
+    "Experience the future of YouTube downloading with YTFlow's cutting-edge interface",
+  keywords: ["YouTube", "download", "video", "futuristic", "modern"],
 };
 
 export default function RootLayout({
@@ -24,9 +23,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <body className={`${inter.variable} font-sans antialiased`}>
+        <div className="particle-bg"></div>
         {children}
       </body>
     </html>
